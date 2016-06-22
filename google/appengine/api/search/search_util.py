@@ -22,6 +22,7 @@
 
 import datetime
 import re
+import unicodedata
 
 from google.appengine.datastore import document_pb
 
@@ -30,10 +31,15 @@ from google.appengine.api.search import QueryParser
 
 DEFAULT_MAX_SNIPPET_LENGTH = 160
 
+EXPRESSION_RETURN_TYPE_TEXT = 1
+EXPRESSION_RETURN_TYPE_NUMERIC = 2
+
 TEXT_DOCUMENT_FIELD_TYPES = [
     document_pb.FieldValue.ATOM,
     document_pb.FieldValue.TEXT,
     document_pb.FieldValue.HTML,
+    document_pb.FieldValue.UNTOKENIZED_PREFIX,
+    document_pb.FieldValue.TOKENIZED_PREFIX,
     ]
 
 TEXT_QUERY_TYPES = [
@@ -53,11 +59,31 @@ class UnsupportedOnDevError(Exception):
   """Indicates attempt to perform an action unsupported on the dev server."""
 
 
-def GetFieldInDocument(document, field_name):
-  """Find and return the first field with the provided name in the document."""
-  for f in document.field_list():
-    if f.name() == field_name:
-      return f
+def GetFieldInDocument(document, field_name, return_type=None):
+  """Find and return the field with the provided name and type."""
+  if return_type is not None:
+
+    field_list = [f for f in document.field_list() if f.name() == field_name]
+    field_types_dict = {}
+    for f in field_list:
+      field_types_dict.setdefault(f.value().type(), f)
+    if return_type == EXPRESSION_RETURN_TYPE_TEXT:
+      if document_pb.FieldValue.HTML in field_types_dict:
+        return field_types_dict[document_pb.FieldValue.HTML]
+      if document_pb.FieldValue.ATOM in field_types_dict:
+        return field_types_dict[document_pb.FieldValue.ATOM]
+      return field_types_dict.get(document_pb.FieldValue.TEXT)
+    elif return_type == EXPRESSION_RETURN_TYPE_NUMERIC:
+      if document_pb.FieldValue.NUMBER in field_types_dict:
+        return field_types_dict[document_pb.FieldValue.NUMBER]
+      return field_types_dict.get(document_pb.FieldValue.DATE)
+    else:
+      return field_types_dict.get(return_type)
+  else:
+
+    for f in document.field_list():
+      if f.name() == field_name:
+        return f
   return None
 
 
@@ -150,3 +176,28 @@ def TreeRepr(tree, depth=0):
     children = '\n' + '\n'.join([TreeRepr(child, depth=depth+1)
                                  for child in tree.children if child])
   return depth * '  ' + _NodeRepr(tree) + children
+
+
+def RemoveAccents(text):
+  if not isinstance(text, basestring):
+    return text
+  if isinstance(text, str):
+    text = text.decode('utf-8')
+  return u''.join([c for c in text if not unicodedata.combining(c)])
+
+
+def ConvertToNfkd(text):
+  if not isinstance(text, basestring):
+    return text
+  if isinstance(text, str):
+    text = text.decode('utf-8')
+  return unicodedata.normalize('NFKD', text)
+
+
+def RemoveAccentsNfkd(text):
+  if not isinstance(text, basestring):
+    return text
+  if isinstance(text, str):
+    text = text.decode('utf-8')
+  return u''.join([c for c in unicodedata.normalize('NFKD', text)
+                   if not unicodedata.combining(c)])

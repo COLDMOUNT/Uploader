@@ -34,6 +34,7 @@ polymorphic queries.
 """
 
 
+
 from google.appengine.ext import db
 
 
@@ -270,7 +271,7 @@ class PolyModel(db.Model):
 
   @classmethod
   def class_key(cls):
-    """Caclulate the class-key for this class.
+    """Calculate the class-key for this class.
 
     Returns:
       Class key for class.  By default this is a the list of classes

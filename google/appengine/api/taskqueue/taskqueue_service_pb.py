@@ -1029,6 +1029,8 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
   body_ = ""
   has_transaction_ = 0
   transaction_ = None
+  has_datastore_transaction_ = 0
+  datastore_transaction_ = ""
   has_app_id_ = 0
   app_id_ = ""
   has_crontimetable_ = 0
@@ -1043,6 +1045,8 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
   mode_ = 0
   has_tag_ = 0
   tag_ = ""
+  has_cron_retry_parameters_ = 0
+  cron_retry_parameters_ = None
 
   def __init__(self, contents=None):
     self.header_ = []
@@ -1162,6 +1166,19 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
 
   def has_transaction(self): return self.has_transaction_
 
+  def datastore_transaction(self): return self.datastore_transaction_
+
+  def set_datastore_transaction(self, x):
+    self.has_datastore_transaction_ = 1
+    self.datastore_transaction_ = x
+
+  def clear_datastore_transaction(self):
+    if self.has_datastore_transaction_:
+      self.has_datastore_transaction_ = 0
+      self.datastore_transaction_ = ""
+
+  def has_datastore_transaction(self): return self.has_datastore_transaction_
+
   def app_id(self): return self.app_id_
 
   def set_app_id(self, x):
@@ -1271,6 +1288,25 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
 
   def has_tag(self): return self.has_tag_
 
+  def cron_retry_parameters(self):
+    if self.cron_retry_parameters_ is None:
+      self.lazy_init_lock_.acquire()
+      try:
+        if self.cron_retry_parameters_ is None: self.cron_retry_parameters_ = TaskQueueRetryParameters()
+      finally:
+        self.lazy_init_lock_.release()
+    return self.cron_retry_parameters_
+
+  def mutable_cron_retry_parameters(self): self.has_cron_retry_parameters_ = 1; return self.cron_retry_parameters()
+
+  def clear_cron_retry_parameters(self):
+
+    if self.has_cron_retry_parameters_:
+      self.has_cron_retry_parameters_ = 0;
+      if self.cron_retry_parameters_ is not None: self.cron_retry_parameters_.Clear()
+
+  def has_cron_retry_parameters(self): return self.has_cron_retry_parameters_
+
 
   def MergeFrom(self, x):
     assert x is not self
@@ -1282,6 +1318,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     for i in xrange(x.header_size()): self.add_header().CopyFrom(x.header(i))
     if (x.has_body()): self.set_body(x.body())
     if (x.has_transaction()): self.mutable_transaction().MergeFrom(x.transaction())
+    if (x.has_datastore_transaction()): self.set_datastore_transaction(x.datastore_transaction())
     if (x.has_app_id()): self.set_app_id(x.app_id())
     if (x.has_crontimetable()): self.mutable_crontimetable().MergeFrom(x.crontimetable())
     if (x.has_description()): self.set_description(x.description())
@@ -1289,6 +1326,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     if (x.has_retry_parameters()): self.mutable_retry_parameters().MergeFrom(x.retry_parameters())
     if (x.has_mode()): self.set_mode(x.mode())
     if (x.has_tag()): self.set_tag(x.tag())
+    if (x.has_cron_retry_parameters()): self.mutable_cron_retry_parameters().MergeFrom(x.cron_retry_parameters())
 
   def Equals(self, x):
     if x is self: return 1
@@ -1309,6 +1347,8 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     if self.has_body_ and self.body_ != x.body_: return 0
     if self.has_transaction_ != x.has_transaction_: return 0
     if self.has_transaction_ and self.transaction_ != x.transaction_: return 0
+    if self.has_datastore_transaction_ != x.has_datastore_transaction_: return 0
+    if self.has_datastore_transaction_ and self.datastore_transaction_ != x.datastore_transaction_: return 0
     if self.has_app_id_ != x.has_app_id_: return 0
     if self.has_app_id_ and self.app_id_ != x.app_id_: return 0
     if self.has_crontimetable_ != x.has_crontimetable_: return 0
@@ -1323,6 +1363,8 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     if self.has_mode_ and self.mode_ != x.mode_: return 0
     if self.has_tag_ != x.has_tag_: return 0
     if self.has_tag_ and self.tag_ != x.tag_: return 0
+    if self.has_cron_retry_parameters_ != x.has_cron_retry_parameters_: return 0
+    if self.has_cron_retry_parameters_ and self.cron_retry_parameters_ != x.cron_retry_parameters_: return 0
     return 1
 
   def IsInitialized(self, debug_strs=None):
@@ -1345,6 +1387,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     if (self.has_crontimetable_ and not self.crontimetable_.IsInitialized(debug_strs)): initialized = 0
     if (self.has_payload_ and not self.payload_.IsInitialized(debug_strs)): initialized = 0
     if (self.has_retry_parameters_ and not self.retry_parameters_.IsInitialized(debug_strs)): initialized = 0
+    if (self.has_cron_retry_parameters_ and not self.cron_retry_parameters_.IsInitialized(debug_strs)): initialized = 0
     return initialized
 
   def ByteSize(self):
@@ -1358,6 +1401,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     for i in xrange(len(self.header_)): n += self.header_[i].ByteSize()
     if (self.has_body_): n += 1 + self.lengthString(len(self.body_))
     if (self.has_transaction_): n += 1 + self.lengthString(self.transaction_.ByteSize())
+    if (self.has_datastore_transaction_): n += 2 + self.lengthString(len(self.datastore_transaction_))
     if (self.has_app_id_): n += 1 + self.lengthString(len(self.app_id_))
     if (self.has_crontimetable_): n += 2 + self.crontimetable_.ByteSize()
     if (self.has_description_): n += 1 + self.lengthString(len(self.description_))
@@ -1365,6 +1409,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     if (self.has_retry_parameters_): n += 2 + self.lengthString(self.retry_parameters_.ByteSize())
     if (self.has_mode_): n += 2 + self.lengthVarInt64(self.mode_)
     if (self.has_tag_): n += 2 + self.lengthString(len(self.tag_))
+    if (self.has_cron_retry_parameters_): n += 2 + self.lengthString(self.cron_retry_parameters_.ByteSize())
     return n + 3
 
   def ByteSizePartial(self):
@@ -1384,6 +1429,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     for i in xrange(len(self.header_)): n += self.header_[i].ByteSizePartial()
     if (self.has_body_): n += 1 + self.lengthString(len(self.body_))
     if (self.has_transaction_): n += 1 + self.lengthString(self.transaction_.ByteSizePartial())
+    if (self.has_datastore_transaction_): n += 2 + self.lengthString(len(self.datastore_transaction_))
     if (self.has_app_id_): n += 1 + self.lengthString(len(self.app_id_))
     if (self.has_crontimetable_): n += 2 + self.crontimetable_.ByteSizePartial()
     if (self.has_description_): n += 1 + self.lengthString(len(self.description_))
@@ -1391,6 +1437,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     if (self.has_retry_parameters_): n += 2 + self.lengthString(self.retry_parameters_.ByteSizePartial())
     if (self.has_mode_): n += 2 + self.lengthVarInt64(self.mode_)
     if (self.has_tag_): n += 2 + self.lengthString(len(self.tag_))
+    if (self.has_cron_retry_parameters_): n += 2 + self.lengthString(self.cron_retry_parameters_.ByteSizePartial())
     return n
 
   def Clear(self):
@@ -1402,6 +1449,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     self.clear_header()
     self.clear_body()
     self.clear_transaction()
+    self.clear_datastore_transaction()
     self.clear_app_id()
     self.clear_crontimetable()
     self.clear_description()
@@ -1409,6 +1457,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     self.clear_retry_parameters()
     self.clear_mode()
     self.clear_tag()
+    self.clear_cron_retry_parameters()
 
   def OutputUnchecked(self, out):
     out.putVarInt32(10)
@@ -1458,6 +1507,13 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     if (self.has_tag_):
       out.putVarInt32(154)
       out.putPrefixedString(self.tag_)
+    if (self.has_cron_retry_parameters_):
+      out.putVarInt32(162)
+      out.putVarInt32(self.cron_retry_parameters_.ByteSize())
+      self.cron_retry_parameters_.OutputUnchecked(out)
+    if (self.has_datastore_transaction_):
+      out.putVarInt32(170)
+      out.putPrefixedString(self.datastore_transaction_)
 
   def OutputPartial(self, out):
     if (self.has_queue_name_):
@@ -1510,6 +1566,13 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     if (self.has_tag_):
       out.putVarInt32(154)
       out.putPrefixedString(self.tag_)
+    if (self.has_cron_retry_parameters_):
+      out.putVarInt32(162)
+      out.putVarInt32(self.cron_retry_parameters_.ByteSizePartial())
+      self.cron_retry_parameters_.OutputPartial(out)
+    if (self.has_datastore_transaction_):
+      out.putVarInt32(170)
+      out.putPrefixedString(self.datastore_transaction_)
 
   def TryMerge(self, d):
     while d.avail() > 0:
@@ -1568,6 +1631,15 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
       if tt == 154:
         self.set_tag(d.getPrefixedString())
         continue
+      if tt == 162:
+        length = d.getVarInt32()
+        tmp = ProtocolBuffer.Decoder(d.buffer(), d.pos(), d.pos() + length)
+        d.skip(length)
+        self.mutable_cron_retry_parameters().TryMerge(tmp)
+        continue
+      if tt == 170:
+        self.set_datastore_transaction(d.getPrefixedString())
+        continue
 
 
       if (tt == 0): raise ProtocolBuffer.ProtocolBufferDecodeError
@@ -1594,6 +1666,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
       res+=prefix+"transaction <\n"
       res+=self.transaction_.__str__(prefix + "  ", printElemNumber)
       res+=prefix+">\n"
+    if self.has_datastore_transaction_: res+=prefix+("datastore_transaction: %s\n" % self.DebugFormatString(self.datastore_transaction_))
     if self.has_app_id_: res+=prefix+("app_id: %s\n" % self.DebugFormatString(self.app_id_))
     if self.has_crontimetable_:
       res+=prefix+"CronTimetable {\n"
@@ -1610,6 +1683,10 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
       res+=prefix+">\n"
     if self.has_mode_: res+=prefix+("mode: %s\n" % self.DebugFormatInt32(self.mode_))
     if self.has_tag_: res+=prefix+("tag: %s\n" % self.DebugFormatString(self.tag_))
+    if self.has_cron_retry_parameters_:
+      res+=prefix+"cron_retry_parameters <\n"
+      res+=self.cron_retry_parameters_.__str__(prefix + "  ", printElemNumber)
+      res+=prefix+">\n"
     return res
 
 
@@ -1626,6 +1703,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
   kHeadervalue = 8
   kbody = 9
   ktransaction = 10
+  kdatastore_transaction = 21
   kapp_id = 11
   kCronTimetableGroup = 12
   kCronTimetableschedule = 13
@@ -1635,6 +1713,7 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
   kretry_parameters = 17
   kmode = 18
   ktag = 19
+  kcron_retry_parameters = 20
 
   _TEXT = _BuildTagLookupTable({
     0: "ErrorCode",
@@ -1657,7 +1736,9 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     17: "retry_parameters",
     18: "mode",
     19: "tag",
-  }, 19)
+    20: "cron_retry_parameters",
+    21: "datastore_transaction",
+  }, 21)
 
   _TYPES = _BuildTagLookupTable({
     0: ProtocolBuffer.Encoder.NUMERIC,
@@ -1680,7 +1761,9 @@ class TaskQueueAddRequest(ProtocolBuffer.ProtocolMessage):
     17: ProtocolBuffer.Encoder.STRING,
     18: ProtocolBuffer.Encoder.NUMERIC,
     19: ProtocolBuffer.Encoder.STRING,
-  }, 19, ProtocolBuffer.Encoder.MAX_TYPE)
+    20: ProtocolBuffer.Encoder.STRING,
+    21: ProtocolBuffer.Encoder.STRING,
+  }, 21, ProtocolBuffer.Encoder.MAX_TYPE)
 
 
   _STYLE = """"""

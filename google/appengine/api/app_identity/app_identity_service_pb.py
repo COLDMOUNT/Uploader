@@ -1785,7 +1785,8 @@ class _SigningService_ClientBaseStub(_client_stub_base_class):
                           request,
                           response,
                           callback,
-                          self._protorpc_SignForApp)
+                          self._protorpc_SignForApp,
+                          package_name='apphosting')
 
   def GetPublicCertificatesForApp(self, request, rpc=None, callback=None, response=None):
     """Make a GetPublicCertificatesForApp RPC call.
@@ -1810,7 +1811,8 @@ class _SigningService_ClientBaseStub(_client_stub_base_class):
                           request,
                           response,
                           callback,
-                          self._protorpc_GetPublicCertificatesForApp)
+                          self._protorpc_GetPublicCertificatesForApp,
+                          package_name='apphosting')
 
   def GetServiceAccountName(self, request, rpc=None, callback=None, response=None):
     """Make a GetServiceAccountName RPC call.
@@ -1835,7 +1837,8 @@ class _SigningService_ClientBaseStub(_client_stub_base_class):
                           request,
                           response,
                           callback,
-                          self._protorpc_GetServiceAccountName)
+                          self._protorpc_GetServiceAccountName,
+                          package_name='apphosting')
 
   def GetAccessToken(self, request, rpc=None, callback=None, response=None):
     """Make a GetAccessToken RPC call.
@@ -1860,7 +1863,8 @@ class _SigningService_ClientBaseStub(_client_stub_base_class):
                           request,
                           response,
                           callback,
-                          self._protorpc_GetAccessToken)
+                          self._protorpc_GetAccessToken,
+                          package_name='apphosting')
 
   def GetDefaultGcsBucketName(self, request, rpc=None, callback=None, response=None):
     """Make a GetDefaultGcsBucketName RPC call.
@@ -1885,7 +1889,8 @@ class _SigningService_ClientBaseStub(_client_stub_base_class):
                           request,
                           response,
                           callback,
-                          self._protorpc_GetDefaultGcsBucketName)
+                          self._protorpc_GetDefaultGcsBucketName,
+                          package_name='apphosting')
 
 
 class _SigningService_ClientStub(_SigningService_ClientBaseStub):
@@ -1935,7 +1940,12 @@ class SigningService(_server_stub_base_class):
   def __init__(self, *args, **kwargs):
     """Creates a Stubby RPC server.
 
-    See BaseRpcServer.__init__ in rpcserver.py for detail on arguments.
+    The arguments to this constructor are the same as the arguments to
+    BaseRpcServer.__init__ in rpcserver.py *MINUS* export_name. This
+    constructor passes its own value for export_name to
+    BaseRpcServer.__init__, so callers of this constructor should only
+    pass to this constructor values corresponding to
+    BaseRpcServer.__init__'s remaining arguments.
     """
     if _server_stub_base_class is object:
       raise NotImplementedError('Add //net/rpc/python:rpcserver as a '
@@ -1947,7 +1957,7 @@ class SigningService(_server_stub_base_class):
     """Creates a new SigningService Stubby client stub.
 
     Args:
-      rpc_stub_parameters: an RPC_StubParameter instance.
+      rpc_stub_parameters: an RPC_StubParameters instance.
       service_name: the service name used by the Stubby server.
     """
 
@@ -2030,31 +2040,31 @@ class SigningService(_server_stub_base_class):
     See BaseRpcServer in rpcserver.py for details.
     """
     rpcserver._GetHandlerDecorator(
-        getattr(self.SignForApp, 'im_func' if str is bytes else '__func__'),
+        getattr(self.SignForApp, '__func__'),
         SignForAppRequest,
         SignForAppResponse,
         None,
         'INTEGRITY')
     rpcserver._GetHandlerDecorator(
-        getattr(self.GetPublicCertificatesForApp, 'im_func' if str is bytes else '__func__'),
+        getattr(self.GetPublicCertificatesForApp, '__func__'),
         GetPublicCertificateForAppRequest,
         GetPublicCertificateForAppResponse,
         None,
         'INTEGRITY')
     rpcserver._GetHandlerDecorator(
-        getattr(self.GetServiceAccountName, 'im_func' if str is bytes else '__func__'),
+        getattr(self.GetServiceAccountName, '__func__'),
         GetServiceAccountNameRequest,
         GetServiceAccountNameResponse,
         None,
         'INTEGRITY')
     rpcserver._GetHandlerDecorator(
-        getattr(self.GetAccessToken, 'im_func' if str is bytes else '__func__'),
+        getattr(self.GetAccessToken, '__func__'),
         GetAccessTokenRequest,
         GetAccessTokenResponse,
         None,
         'INTEGRITY')
     rpcserver._GetHandlerDecorator(
-        getattr(self.GetDefaultGcsBucketName, 'im_func' if str is bytes else '__func__'),
+        getattr(self.GetDefaultGcsBucketName, '__func__'),
         GetDefaultGcsBucketNameRequest,
         GetDefaultGcsBucketNameResponse,
         None,

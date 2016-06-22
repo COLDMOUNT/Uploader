@@ -37,7 +37,7 @@ from google.appengine.tools.value_mixin import ValueMixin
 class WebXmlParser(object):
   """Provides logic for walking down XML tree and pulling data."""
 
-  def ProcessXml(self, xml_str):
+  def ProcessXml(self, xml_str, has_jsps=False):
     """Parses XML string and returns object representation of relevant info.
 
     Uses ElementTree parser to return a tree representation of XML.
@@ -46,6 +46,7 @@ class WebXmlParser(object):
 
     Args:
       xml_str: The XML string itself.
+      has_jsps: True if the application has *.jsp files.
 
     Returns:
       If there is well-formed but illegal XML, returns a list of
@@ -57,6 +58,7 @@ class WebXmlParser(object):
     """
     try:
       self.web_xml = WebXml()
+      self.web_xml.has_jsps = has_jsps
       self.errors = []
       xml_root = ElementTree.fromstring(xml_str)
       for node in xml_root.getchildren():
@@ -185,10 +187,11 @@ class WebXmlParser(object):
     if constraint is not None:
       role_name = xml_parser_utils.GetChildNodeText(
           constraint, 'role-name').lower()
-      if role_name not in ('none', '*', 'admin'):
-        self.errors.append('Bad value for <role-name> (%s), must be none, '
-                           '*, or admin' % role_name)
-      security_constraint.required_role = role_name
+      if role_name:
+        if role_name not in ('none', '*', 'admin'):
+          self.errors.append('Bad value for <role-name> (%s), must be none, '
+                             '*, or admin' % role_name)
+        security_constraint.required_role = role_name
 
     user_constraint = xml_parser_utils.GetChild(node, 'user-data-constraint')
     if user_constraint is not None:
@@ -212,6 +215,7 @@ class WebXml(ValueMixin):
     self.mime_mappings = {}
     self.pattern_to_id = {}
     self.fall_through_to_runtime = False
+    self.has_jsps = False
 
   def GetMimeTypeForPath(self, path):
     if '.' not in path:

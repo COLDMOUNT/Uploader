@@ -158,6 +158,8 @@ class LogServiceStub(apiproxy_stub.APIProxyStub):
     """
     if module is None:
       module = appinfo.DEFAULT_MODULE
+    if version_id is None:
+      version_id = 'NO-VERSION'
     major_version_id = version_id.split('.', 1)[0]
     if start_time is None:
       start_time = self._get_time_usec()
@@ -349,8 +351,13 @@ class LogServiceStub(apiproxy_stub.APIProxyStub):
       values += module_values
 
     if request.has_offset():
-      filters.append('RequestLogs.id < ?')
-      values.append(int(request.offset().request_id()))
+      try:
+        filters.append('RequestLogs.id < ?')
+        values.append(int(request.offset().request_id()))
+      except ValueError:
+        logging.error('Bad offset in log request: "%s"', request.offset())
+        raise apiproxy_errors.ApplicationError(
+            log_service_pb.LogServiceError.INVALID_REQUEST)
     if request.has_minimum_log_level():
       filters.append('AppLogs.level >= ?')
       values.append(request.minimum_log_level())

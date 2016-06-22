@@ -21,6 +21,7 @@
 
 
 
+
 from google.appengine.api.search import search_util
 
 
@@ -67,7 +68,8 @@ class Token(object):
 
   def __repr__(self):
     return search_util.Repr(
-        self, [('chars', self.chars), ('position', self.position)])
+        self, [('chars', self.chars.encode('utf-8')),
+               ('position', self.position)])
 
   def __eq__(self, other):
     return (isinstance(other, Token) and

@@ -26,6 +26,7 @@ from __future__ import with_statement
 
 
 
+
 import httplib
 import re
 import threading
@@ -137,7 +138,7 @@ def _handle_post(gcs_stub, filename, headers):
   token = gcs_stub.post_start_creation(filename, headers)
   response_headers = {
       'location': 'https://storage.googleapis.com/%s?%s' % (
-          filename,
+          urllib.quote(filename),
           urllib.urlencode({'upload_id': token})),
       'content-type': content_type.value,
       'content-length': 0
@@ -251,19 +252,44 @@ def _handle_get(gcs_stub, filename, param_dict, headers):
   mo = re.match(BUCKET_ONLY_PATH, filename)
   if mo is not None:
 
-    return _handle_get_bucket(gcs_stub, mo.group(1), param_dict)
+    if 'location' in param_dict:
+      builder = ET.TreeBuilder()
+      builder.start('LocationConstraint', {})
+      builder.data('US')
+      builder.end('LocationConstraint')
+      root = builder.close()
+      body = ET.tostring(root)
+      response_headers = {'content-length': len(body),
+                          'content-type': 'application/xml'}
+      return _FakeUrlFetchResult(httplib.OK, response_headers, body)
+    elif 'storageClass' in param_dict:
+      builder = ET.TreeBuilder()
+      builder.start('StorageClass', {})
+      builder.data('STANDARD')
+      builder.end('StorageClass')
+      root = builder.close()
+      body = ET.tostring(root)
+      response_headers = {'content-length': len(body),
+                          'content-type': 'application/xml'}
+      return _FakeUrlFetchResult(httplib.OK, response_headers, body)
+    else:
+
+      return _handle_get_bucket(gcs_stub, mo.group(1), param_dict)
   else:
 
     result = _handle_head(gcs_stub, filename)
     if result.status_code == httplib.NOT_FOUND:
       return result
+
+
+
     start, end = _Range(headers).value
-    st_size = result.headers['content-length']
-    if end is None:
-      end = st_size - 1
-    result.headers['content-range'] = 'bytes: %d-%d/%d' % (start,
-                                                           end,
-                                                           st_size)
+    st_size = result.headers['x-goog-stored-content-length']
+    if end is not None:
+      result.status_code = httplib.PARTIAL_CONTENT
+      end = min(end, st_size - 1)
+      result.headers['content-range'] = 'bytes %d-%d/%d' % (start, end, st_size)
+
     result.content = gcs_stub.get_object(filename, start, end)
     result.headers['content-length'] = len(result.content)
     return result
@@ -344,7 +370,8 @@ def _handle_head(gcs_stub, filename):
   http_time = common.posix_time_to_http(filestat.st_ctime)
 
   response_headers = {
-      'content-length': filestat.st_size,
+      'x-goog-stored-content-length': filestat.st_size,
+      'content-length': 0,
       'content-type': filestat.content_type,
       'etag': filestat.etag,
       'last-modified': http_time
@@ -399,7 +426,7 @@ class _ContentType(_Header):
   """Content-type header."""
 
   HEADER = 'Content-Type'
-  DEFAULT = 'binary/octet-stream'
+  DEFAULT = 'application/octet-stream'
 
 
 class _ContentRange(_Header):

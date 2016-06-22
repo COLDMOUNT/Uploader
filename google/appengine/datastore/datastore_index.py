@@ -14,10 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-
-
-
 """Primitives for dealing with datastore indexes.
 
 Example index.yaml file:
@@ -46,6 +42,12 @@ indexes:
     direction: asc
   - name: owner
     direction: asc
+
+- kind: Mountain
+  properties:
+  - name: name
+  - name: location
+    mode: geospatial
 """
 
 
@@ -55,8 +57,13 @@ indexes:
 
 
 
+import google
+import yaml
 
+import copy
 import itertools
+
+from google.appengine.datastore import entity_pb
 
 from google.appengine.api import appinfo
 from google.appengine.api import datastore_types
@@ -64,44 +71,109 @@ from google.appengine.api import validation
 from google.appengine.api import yaml_errors
 from google.appengine.api import yaml_object
 from google.appengine.datastore import datastore_pb
-from google.appengine.datastore import entity_pb
+
+
+
+
+
 
 
 class Property(validation.Validated):
-  """Representation for an individual property of an index.
+  """Representation for a property of an index as it appears in YAML.
 
-  This class must be kept in sync with
-  java/com/google/apphosting/utils/config/IndexYamlReader.java.
-
-  Attributes:
+  Attributes (all in string form):
     name: Name of attribute to sort by.
     direction: Direction of sort.
+    mode: How the property is indexed. Either 'geospatial'
+        or None (unspecified).
   """
 
   ATTRIBUTES = {
       'name': validation.Type(str, convert=False),
-      'direction': validation.Options(('asc', ('ascending',)),
-                                      ('desc', ('descending',)),
-                                      default='asc'),
-      }
+      'direction': validation.Optional([('asc', ('ascending',)),
+                                        ('desc', ('descending',))]),
+      'mode': validation.Optional(['geospatial'])
+  }
+
+  def IsAscending(self):
+
+
+
+
+
+
+    return self.direction != 'desc'
+
+  def CheckInitialized(self):
+    if self.direction is not None and self.mode is not None:
+      raise validation.ValidationError(
+          'direction and mode are mutually exclusive')
+    super(Property, self).CheckInitialized()
+
+
+def _PropertyPresenter(dumper, prop):
+  """A PyYaml presenter for Property.
+
+  It differs from the default by not outputting 'mode: null' and direction when
+  mode is specified. This is done in order to ensure backwards compatibility.
+
+  Args:
+    dumper: the Dumper object provided by PyYaml.
+    prop: the Property object to serialize.
+
+  Returns:
+    A PyYaml object mapping.
+  """
+
+
+  prop_copy = copy.copy(prop)
+
+
+  if prop.mode is None:
+    del prop_copy.mode
+
+  if prop.direction is None:
+    del prop_copy.direction
+
+  return dumper.represent_object(prop_copy)
+
+yaml.add_representer(Property, _PropertyPresenter)
 
 
 class Index(validation.Validated):
   """Individual index definition.
 
-  Order of the properties determines a given indexes sort priority.
+  Order of the properties determines a given index's sort priority.
 
   Attributes:
     kind: Datastore kind that index belongs to.
     ancestors: Include ancestors in index.
-    properties: Properties to sort on.
+    properties: Properties to be included.
   """
 
   ATTRIBUTES = {
       'kind': validation.Type(str, convert=False),
       'ancestor': validation.Type(bool, convert=False, default=False),
       'properties': validation.Optional(validation.Repeated(Property)),
-      }
+  }
+
+  def CheckInitialized(self):
+    self._Normalize()
+    super(Index, self).CheckInitialized()
+
+  def _Normalize(self):
+    if self.properties is None:
+      return
+    is_geo = any(x.mode == 'geospatial' for x in self.properties)
+    for prop in self.properties:
+      if is_geo:
+        if prop.direction is not None:
+          raise validation.ValidationError(
+              'direction not supported in a geospatial index')
+      else:
+
+        if prop.IsAscending():
+          prop.direction = 'asc'
 
 
 class IndexDefinitions(validation.Validated):
@@ -114,7 +186,7 @@ class IndexDefinitions(validation.Validated):
   ATTRIBUTES = {
       appinfo.APPLICATION: validation.Optional(appinfo.APPLICATION_RE_STRING),
       'indexes': validation.Optional(validation.Repeated(Index)),
-      }
+  }
 
 
 def ParseIndexDefinitions(document, open_fn=None):
@@ -159,8 +231,7 @@ def IndexDefinitionsToKeys(indexes):
   Returns:
     A set of keys constructed from the argument, each key being a
     tuple of the form (kind, ancestor, properties) where properties is
-    a tuple of (name, direction) pairs, direction being ASCENDING or
-    DESCENDING (the enums).
+    a tuple of PropertySpec objects.
   """
   keyset = set()
   if indexes is not None:
@@ -168,6 +239,9 @@ def IndexDefinitionsToKeys(indexes):
       for index in indexes.indexes:
         keyset.add(IndexToKey(index))
   return keyset
+
+
+
 
 
 def IndexToKey(index):
@@ -178,48 +252,143 @@ def IndexToKey(index):
 
   Returns:
     A tuple of the form (kind, ancestor, properties) where properties
-    is a tuple of (name, direction) pairs, direction being ASCENDING
-    or DESCENDING (the enums).
+    is a sequence of PropertySpec objects derived from the Index.
   """
+
+
   props = []
   if index.properties is not None:
     for prop in index.properties:
-      if prop.direction == 'asc':
-        direction = ASCENDING
-      else:
-        direction = DESCENDING
-      props.append((prop.name, direction))
+      props.append(PropertySpec(name=prop.name,
+                                direction = (ASCENDING if prop.IsAscending()
+                                             else DESCENDING)))
   return index.kind, index.ancestor, tuple(props)
 
 
 
 
 
+class PropertySpec(object):
+  """Index property attributes required to satisfy a query."""
 
-ASCENDING = datastore_pb.Query_Order.ASCENDING
-DESCENDING = datastore_pb.Query_Order.DESCENDING
+  def __init__(self, name, direction=None, mode=None):
+    assert direction is None or mode is None
+    self._name = name
+    self._direction = direction
+    self._mode = mode
+
+  @property
+  def name(self):
+    return self._name
+
+  @property
+  def direction(self):
+    return self._direction
+
+  @property
+  def mode(self):
+    return self._mode
+
+  def __eq__(self, other):
+    if not isinstance(other, PropertySpec):
+      return NotImplemented
+    return self.__dict__ == other.__dict__
+
+  def __ne__(self, other):
+    return not self == other
+
+  def __tuple(self):
+    """Produces a tuple for comparison purposes."""
+    return (self._name, self._direction, self._mode)
+
+  def __lt__(self, other):
+    if not isinstance(other, PropertySpec):
+      return NotImplemented
+    return self.__tuple() < other.__tuple()
+
+  def __le__(self, other):
+    if not isinstance(other, PropertySpec):
+      return NotImplemented
+    return self.__tuple() <= other.__tuple()
+
+  def __gt__(self, other):
+    if not isinstance(other, PropertySpec):
+      return NotImplemented
+    return self.__tuple() > other.__tuple()
+
+  def __ge__(self, other):
+    if not isinstance(other, PropertySpec):
+      return NotImplemented
+    return self.__tuple() >= other.__tuple()
+
+  def __hash__(self):
+    return hash(('PropertySpec', self._name, self._direction, self._mode))
+
+  def __repr__(self):
+    builder = ['PropertySpec(name=%s' % self._name]
+    if self._direction is not None:
+      builder.append('direction=%s' % entity_pb.Index_Property.Direction_Name(self._direction))
+    if self._mode is not None:
+      builder.append('mode=%s' % entity_pb.Index_Property.Mode_Name(self._mode))
+    return '%s)' % (', '.join(builder),)
+
+  def Satisfies(self, other):
+    """Determines whether existing index can satisfy requirements of a new query.
+
+    Used in finding matching postfix with traditional "ordered" index specs.
+    """
+    assert isinstance(other, PropertySpec)
+    if self._name != other._name:
+      return False
+    if self._mode is not None or other._mode is not None:
 
 
-EQUALITY_OPERATORS = set((datastore_pb.Query_Filter.EQUAL,
-                          ))
-INEQUALITY_OPERATORS = set((datastore_pb.Query_Filter.LESS_THAN,
+
+      return False
+    if (other._direction is None):
+
+
+      return True
+    return self._direction == other._direction
+
+  def CopyToIndexPb(self, pb):
+    pb.set_name(self._name)
+
+
+
+
+
+
+
+
+
+    if (self._mode is None):
+      pb.set_direction(self._direction or ASCENDING)
+    else:
+      pb.set_mode(self._mode)
+
+
+
+GEOSPATIAL = entity_pb.Index_Property.GEOSPATIAL
+ASCENDING = entity_pb.Index_Property.ASCENDING
+DESCENDING = entity_pb.Index_Property.DESCENDING
+
+
+assert entity_pb.Index_Property.ASCENDING == datastore_pb.Query_Order.ASCENDING
+assert (entity_pb.Index_Property.DESCENDING ==
+        datastore_pb.Query_Order.DESCENDING)
+
+
+EQUALITY_OPERATORS = set([datastore_pb.Query_Filter.EQUAL])
+INEQUALITY_OPERATORS = set([datastore_pb.Query_Filter.LESS_THAN,
                             datastore_pb.Query_Filter.LESS_THAN_OR_EQUAL,
                             datastore_pb.Query_Filter.GREATER_THAN,
-                            datastore_pb.Query_Filter.GREATER_THAN_OR_EQUAL,
-                            ))
-EXISTS_OPERATORS = set((datastore_pb.Query_Filter.EXISTS,
-                        ))
+                            datastore_pb.Query_Filter.GREATER_THAN_OR_EQUAL])
+EXISTS_OPERATORS = set([datastore_pb.Query_Filter.EXISTS])
 
-
-_DIRECTION_MAP = {
-    'asc':        entity_pb.Index_Property.ASCENDING,
-    'ascending':  entity_pb.Index_Property.ASCENDING,
-    'desc':       entity_pb.Index_Property.DESCENDING,
-    'descending': entity_pb.Index_Property.DESCENDING,
-    }
 
 def Normalize(filters, orders, exists):
-  """ Normalizes filter and order query components.
+  """Normalizes filter and order query components.
 
   The resulting components have the same effect as the given components if used
   in a query.
@@ -328,7 +497,6 @@ def RemoveNativelySupportedComponents(filters, orders, exists):
       return (filters, orders)
 
 
-
   has_key_desc_order = False
   if orders and orders[-1].property() == datastore_types.KEY_SPECIAL_PROPERTY:
     if orders[-1].direction() == ASCENDING:
@@ -347,7 +515,8 @@ def RemoveNativelySupportedComponents(filters, orders, exists):
           f.property(0).name() != datastore_types.KEY_SPECIAL_PROPERTY):
         break
     else:
-      filters = [f for f in filters
+      filters = [
+          f for f in filters
           if f.property(0).name() != datastore_types.KEY_SPECIAL_PROPERTY]
 
   return (filters, orders)
@@ -424,11 +593,11 @@ def CompositeIndexForQuery(query):
       properties: A tuple consisting of:
       - the prefix, represented by a set of property names
       - the postfix, represented by a tuple consisting of any number of:
-        - Sets of property names: Indicates these properties can appear in any
-          order with any direction.
-        - Tuples of (property name, direction) tuples. Indicating the properties
-          must appear in the exact order with the given direction. direction can
-          be None if direction does not matter.
+        - Sets of property names or PropertySpec objects: these
+          properties can appear in any order.
+        - Sequences of PropertySpec objects: Indicates the properties
+          must appear in the given order, with the specified direction (if
+          specified in the PropertySpec).
   """
   required = True
 
@@ -444,6 +613,8 @@ def CompositeIndexForQuery(query):
     assert filter.op() != datastore_pb.Query_Filter.IN, 'Filter.op()==IN'
     nprops = len(filter.property_list())
     assert nprops == 1, 'Filter has %s properties, expected 1' % nprops
+    if filter.op() == datastore_pb.Query_Filter.CONTAINED_IN_REGION:
+      return CompositeIndexForGeoQuery(query)
 
   if not kind:
 
@@ -491,7 +662,9 @@ def CompositeIndexForQuery(query):
 
   prefix = frozenset(f.property(0).name() for f in eq_filters)
 
-  postfix_ordered = [(order.property(), order.direction()) for order in orders]
+  postfix_ordered = [
+      PropertySpec(name=order.property(), direction=order.direction())
+      for order in orders]
 
 
   postfix_group_by = frozenset(f.property(0).name() for f in exists_filters
@@ -507,7 +680,7 @@ def CompositeIndexForQuery(query):
 
       assert ineq_property == orders[0].property()
     else:
-      postfix_ordered.append((ineq_property, None))
+      postfix_ordered.append(PropertySpec(name=ineq_property))
 
   property_count = (len(prefix) + len(postfix_ordered) + len(postfix_group_by)
                     + len(postfix_unordered))
@@ -518,8 +691,9 @@ def CompositeIndexForQuery(query):
 
 
     if postfix_ordered:
-      prop, dir = postfix_ordered[0]
-      if prop == datastore_types.KEY_SPECIAL_PROPERTY and dir is DESCENDING:
+      prop = postfix_ordered[0]
+      if (prop.name == datastore_types.KEY_SPECIAL_PROPERTY and
+          prop.direction == DESCENDING):
         required = True
 
 
@@ -527,20 +701,50 @@ def CompositeIndexForQuery(query):
   return required, kind, ancestor, props
 
 
+def CompositeIndexForGeoQuery(query):
+  """Builds a descriptor for a composite index needed for a geo query.
+
+  Args:
+    query: A datastore_pb.Query instance.
+
+  Returns:
+    A tuple in the same form as produced by CompositeIndexForQuery.
+  """
+  required = True
+  kind = query.kind()
+
+  assert not query.has_ancestor()
+  ancestor = False
+  filters = query.filter_list()
+  preintersection_props = set()
+  geo_props = set()
+  for filter in filters:
+    name = filter.property(0).name()
+    if filter.op() == datastore_pb.Query_Filter.EQUAL:
+      preintersection_props.add(PropertySpec(name=name))
+    else:
+
+      assert filter.op() == datastore_pb.Query_Filter.CONTAINED_IN_REGION
+      geo_props.add(PropertySpec(name=name, mode=GEOSPATIAL))
+
+  prefix = frozenset(preintersection_props)
+  postfix = (frozenset(geo_props),)
+  return required, kind, ancestor, (prefix, postfix)
+
+
 def GetRecommendedIndexProperties(properties):
   """Converts the properties returned by datastore_index.CompositeIndexForQuery
-  into a recommended list of index properties and directions.
+  into a recommended list of index properties with the desired constraints.
 
-  All unordered components are sorted and assigned an ASCENDING direction. All
-  ordered components with out a direction are assigned an ASCEDNING direction.
+  Sets (of property names or PropertySpec objects) are sorted, so as to
+  normalize them.
 
   Args:
     properties: See datastore_index.CompositeIndexForQuery
 
   Returns:
-    A tuple of (name, direction) tuples where:
-        name: a property name
-        direction: datastore_pb.Query_Order.ASCENDING or ...DESCENDING
+    A tuple of PropertySpec objects.
+
   """
 
   prefix, postfix = properties
@@ -548,13 +752,13 @@ def GetRecommendedIndexProperties(properties):
   for sub_list in itertools.chain((prefix,), postfix):
     if isinstance(sub_list, (frozenset, set)):
 
-      for prop in sorted(sub_list):
-        result.append((prop, ASCENDING))
+
+
+      result.extend([(p if isinstance(p, PropertySpec)
+                      else PropertySpec(name=p)) for p in sorted(sub_list)])
     else:
-
-
-      for prop, dir in sub_list:
-        result.append((prop, dir if dir is not None else ASCENDING))
+      result.extend([(PropertySpec(name=p.name, direction=ASCENDING)
+                      if p.direction is None else p) for p in sub_list])
 
   return tuple(result)
 
@@ -567,7 +771,7 @@ def _MatchPostfix(postfix_props, index_props):
   - list of tuples(string, direction): the given order, and, if specified, the
   given direction.
 
-  For example:
+  For example (PropertySpec objects shown here in their legacy shorthand form):
     [set('A', 'B'), [('C', None), ('D', ASC)]]
   matches:
     [('F', ASC), ('B', ASC), ('A', DESC), ('C', DESC), ('D', ASC)]
@@ -580,12 +784,14 @@ def _MatchPostfix(postfix_props, index_props):
     postfix_props: A tuple of sets and lists, as output by
         CompositeIndexForQuery. They should define the requirements for the
         postfix of the index.
-    index_props: A list of tuples (property_name, property_direction), that
+    index_props: A list of PropertySpec objects that
         define the index to try and match.
 
   Returns:
-    The list of tuples that define the prefix properties in the given index.
-    None if the constraints could not be satisfied.
+    The list of PropertySpec objects that define the prefix properties
+    in the given index.  None if the constraints could not be
+    satisfied.
+
   """
 
 
@@ -594,17 +800,18 @@ def _MatchPostfix(postfix_props, index_props):
     index_group_iter = itertools.islice(index_props_rev, len(property_group))
     if isinstance(property_group, (frozenset, set)):
 
-      index_group = set(prop for prop, _ in index_group_iter)
+      index_group = set(prop.name for prop in index_group_iter)
       if index_group != property_group:
         return None
     else:
 
+
       index_group = list(index_group_iter)
       if len(index_group) != len(property_group):
         return None
-      for (index_prop, index_dir), (prop, direction) in itertools.izip(
-          index_group, reversed(property_group)):
-        if index_prop != prop or (direction and index_dir != direction):
+      for candidate, spec in itertools.izip(index_group,
+                                            reversed(property_group)):
+        if not candidate.Satisfies(spec):
           return None
   remaining = list(index_props_rev)
   remaining.reverse()
@@ -653,7 +860,7 @@ def MinimalCompositeIndexForQuery(query, index_defs):
 
       continue
 
-    remaining_index_props = set([prop for prop, _ in index_prefix])
+    remaining_index_props = set([prop.name for prop in index_prefix])
 
     if remaining_index_props - prefix:
 
@@ -707,6 +914,10 @@ def MinimalCompositeIndexForQuery(query, index_defs):
   return False, kind, minimal_ancestor, props
 
 
+
+
+
+
 def IndexYamlForQuery(kind, ancestor, props):
   """Return the composite index definition YAML needed for a query.
 
@@ -717,24 +928,25 @@ def IndexYamlForQuery(kind, ancestor, props):
   Args:
     kind: the kind or None
     ancestor: True if this is an ancestor query, False otherwise
-    props: tuples of the form (name, direction) where:
-        name - a property name;
-        direction - datastore_pb.Query_Order.ASCENDING or ...DESCENDING;
+    props: PropertySpec objects
 
   Returns:
     A string with the YAML for the composite index needed by the query.
   """
-  yaml = []
-  yaml.append('- kind: %s' % kind)
+
+  serialized_yaml = []
+  serialized_yaml.append('- kind: %s' % kind)
   if ancestor:
-    yaml.append('  ancestor: yes')
+    serialized_yaml.append('  ancestor: yes')
   if props:
-    yaml.append('  properties:')
-    for name, direction in props:
-      yaml.append('  - name: %s' % name)
-      if direction == DESCENDING:
-        yaml.append('    direction: desc')
-  return '\n'.join(yaml)
+    serialized_yaml.append('  properties:')
+    for prop in props:
+      serialized_yaml.append('  - name: %s' % prop.name)
+      if prop.direction == DESCENDING:
+        serialized_yaml.append('    direction: desc')
+      if prop.mode is GEOSPATIAL:
+        serialized_yaml.append('    mode: geospatial')
+  return '\n'.join(serialized_yaml)
 
 
 def IndexXmlForQuery(kind, ancestor, props):
@@ -747,21 +959,34 @@ def IndexXmlForQuery(kind, ancestor, props):
   Args:
     kind: the kind or None
     ancestor: True if this is an ancestor query, False otherwise
-    props: tuples of the form (name, direction) where:
-        name - a property name;
-        direction - datastore_pb.Query_Order.ASCENDING or ...DESCENDING;
+    props: PropertySpec objects
 
   Returns:
     A string with the XML for the composite index needed by the query.
   """
-  xml = []
-  xml.append('<datastore-index kind="%s" ancestor="%s">'
-             % (kind, 'true' if ancestor else 'false'))
-  for name, direction in props:
-    xml.append('  <property name="%s" direction="%s" />'
-               % (name, 'asc' if direction == ASCENDING else 'desc'))
-  xml.append('</datastore-index>')
-  return '\n'.join(xml)
+
+  serialized_xml = []
+
+
+  is_geo = any(p.mode is GEOSPATIAL for p in props)
+  if is_geo:
+    ancestor_clause = ''
+  else:
+    ancestor_clause = 'ancestor="%s"' % ('true' if ancestor else 'false',)
+  serialized_xml.append('  <datastore-index kind="%s" %s>'
+                        % (kind, ancestor_clause))
+  for prop in props:
+    if prop.mode is GEOSPATIAL:
+      qual = ' mode="geospatial"'
+    elif is_geo:
+      qual = ''
+    else:
+
+      qual = ' direction="%s"' % ('desc' if prop.direction == DESCENDING
+                                  else 'asc')
+    serialized_xml.append('    <property name="%s"%s />' % (prop.name, qual))
+  serialized_xml.append('  </datastore-index>')
+  return '\n'.join(serialized_xml)
 
 
 def IndexDefinitionToProto(app_id, index_definition):
@@ -786,10 +1011,23 @@ def IndexDefinitionToProto(app_id, index_definition):
   definition_proto.set_ancestor(index_definition.ancestor)
 
   if index_definition.properties is not None:
+    is_geo = any(x.mode == 'geospatial' for x in index_definition.properties)
     for prop in index_definition.properties:
       prop_proto = definition_proto.add_property()
       prop_proto.set_name(prop.name)
-      prop_proto.set_direction(_DIRECTION_MAP[prop.direction])
+
+      if prop.mode == 'geospatial':
+        prop_proto.set_mode(entity_pb.Index_Property.GEOSPATIAL)
+      elif is_geo:
+
+
+
+
+        pass
+      elif prop.IsAscending():
+        prop_proto.set_direction(entity_pb.Index_Property.ASCENDING)
+      else:
+        prop_proto.set_direction(entity_pb.Index_Property.DESCENDING)
 
   return proto
 
@@ -822,8 +1060,14 @@ def ProtoToIndexDefinition(proto):
   proto_index = proto.definition()
   for prop_proto in proto_index.property_list():
     prop_definition = Property(name=prop_proto.name())
-    if prop_proto.direction() == entity_pb.Index_Property.DESCENDING:
-      prop_definition.direction = 'descending'
+
+    if prop_proto.mode() == entity_pb.Index_Property.GEOSPATIAL:
+      prop_definition.mode = 'geospatial'
+    elif prop_proto.direction() == entity_pb.Index_Property.DESCENDING:
+      prop_definition.direction = 'desc'
+    elif prop_proto.direction() == entity_pb.Index_Property.ASCENDING:
+      prop_definition.direction = 'asc'
+
     properties.append(prop_definition)
 
   index = Index(kind=proto_index.entity_type(), properties=properties)

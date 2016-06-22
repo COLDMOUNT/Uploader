@@ -40,6 +40,7 @@ from __future__ import with_statement
 
 
 
+
 __all__ = []
 
 import base64
@@ -329,9 +330,11 @@ class _Group(object):
         queue_dict['mode'] = 'push'
       queue_dict['acl'] = queue.acl
 
-      if queue.Oldest():
-        queue_dict['oldest_task'] = _FormatEta(queue.Oldest())
-        queue_dict['eta_delta'] = _EtaDelta(queue.Oldest(), now)
+
+      oldest_eta = queue.Oldest()
+      if oldest_eta:
+        queue_dict['oldest_task'] = _FormatEta(oldest_eta)
+        queue_dict['eta_delta'] = _EtaDelta(oldest_eta, now)
       else:
         queue_dict['oldest_task'] = ''
         queue_dict['eta_delta'] = ''
@@ -654,7 +657,8 @@ class _Group(object):
       return
 
 
-    if request.add_request(0).has_transaction():
+    if (request.add_request(0).has_transaction()
+        or request.add_request(0).has_datastore_transaction()):
       self._TransactionalBulkAdd(request)
     else:
       self._NonTransactionalBulkAdd(request, response, now)
@@ -677,6 +681,9 @@ class _Group(object):
         assigned unique names.
     """
     try:
+
+
+
       apiproxy_stub_map.MakeSyncCall(
           'datastore_v3', 'AddActions', request, api_base_pb.VoidProto())
     except apiproxy_errors.ApplicationError, e:
@@ -2022,7 +2029,7 @@ class TaskQueueServiceStub(apiproxy_stub.APIProxyStub):
                auto_task_running=False,
                task_retry_seconds=30,
                _all_queues_valid=False,
-               default_http_server=None,
+               default_http_server='localhost',
                _testing_validate_state=False,
                request_data=None):
     """Constructor.
@@ -2103,7 +2110,9 @@ class TaskQueueServiceStub(apiproxy_stub.APIProxyStub):
 
     if self._root_path is None:
       return None
-    for queueyaml in ('queue.yaml', 'queue.yml'):
+    for queueyaml in (
+        'queue.yaml', 'queue.yml',
+        os.path.join('WEB-INF', 'appengine-generated', 'queue.yaml')):
       try:
         path = os.path.join(self._root_path, queueyaml)
         modified = os.stat(path).st_mtime

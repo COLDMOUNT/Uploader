@@ -16,11 +16,14 @@
 #
 
 
-"""An API for creating background threads.
+"""Background Threads API.
+
+An API for creating background threads.
 
 Background threads created using this API do not inherit the context of their
 creator and do not need to end before the creator request completes.
 """
+
 
 
 __all__ = ['start_new_background_thread',

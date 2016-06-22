@@ -16,7 +16,7 @@
 #
 
 
-"""Background thread API module."""
+"""Background Threads API."""
 
 
 from background_thread import *

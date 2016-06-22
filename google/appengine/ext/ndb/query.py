@@ -1,3 +1,18 @@
+#
+# Copyright 2008 The ndb Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Higher-level Query wrapper.
 
 There are perhaps too many query APIs in the world.
@@ -149,7 +164,7 @@ __all__ = ['Query', 'QueryOptions', 'Cursor', 'QueryIterator',
            'FilterNode', 'PostFilterNode', 'FalseNode', 'Node',
            'ParameterNode', 'ParameterizedThing', 'Parameter',
            'ParameterizedFunction', 'gql',
-           ]
+          ]
 
 # Re-export some useful classes from the lower-level module.
 Cursor = datastore_query.Cursor
@@ -259,6 +274,7 @@ class ParameterizedThing(object):
       eq = not eq
     return eq
 
+
 class Parameter(ParameterizedThing):
   """Represents a bound variable in a GQL query.
 
@@ -296,7 +312,7 @@ class Parameter(ParameterizedThing):
     key = self.__key
     if key not in bindings:
       raise datastore_errors.BadArgumentError(
-        'Parameter :%s is not bound.' % key)
+          'Parameter :%s is not bound.' % key)
     value = bindings[key]
     used[key] = True
     return value
@@ -422,7 +438,7 @@ class FalseNode(Node):
     # Because there's no point submitting a query that will never
     # return anything.
     raise datastore_errors.BadQueryError(
-      'Cannot convert FalseNode to predicate')
+        'Cannot convert FalseNode to predicate')
 
 
 class ParameterNode(Node):
@@ -453,7 +469,7 @@ class ParameterNode(Node):
 
   def _to_filter(self, post=False):
     raise datastore_errors.BadArgumentError(
-      'Parameter :%s is not bound.' % (self.__param.key,))
+        'Parameter :%s is not bound.' % (self.__param.key,))
 
   def resolve(self, bindings, used):
     value = self.__param.resolve(bindings, used)
@@ -837,8 +853,8 @@ class Query(object):
         raise TypeError('projection argument cannot be empty')
       if not isinstance(projection, (tuple, list)):
         raise TypeError(
-          'projection must be a tuple, list or None; received %r' %
-          (projection,))
+            'projection must be a tuple, list or None; received %r' %
+            (projection,))
       self._check_properties(self._to_property_names(projection))
       self.__projection = tuple(projection)
 
@@ -848,7 +864,7 @@ class Query(object):
         raise TypeError('group_by argument cannot be empty')
       if not isinstance(group_by, (tuple, list)):
         raise TypeError(
-          'group_by must be a tuple, list or None; received %r' % (group_by,))
+            'group_by must be a tuple, list or None; received %r' % (group_by,))
       self._check_properties(self._to_property_names(group_by))
       self.__group_by = tuple(group_by)
 
@@ -896,7 +912,7 @@ class Query(object):
                           projection=self.projection, group_by=self.group_by)
 
   def _get_query(self, connection):
-    self.bind()  #  Raises an exception if there are unbound parameters.
+    self.bind()  # Raises an exception if there are unbound parameters.
     kind = self.kind
     ancestor = self.ancestor
     if ancestor is not None:
@@ -918,8 +934,8 @@ class Query(object):
                                     group_by=group_by)
     if post_filters is not None:
       dsquery = datastore_query._AugmentedQuery(
-        dsquery,
-        in_memory_filter=post_filters._to_filter(post=True))
+          dsquery,
+          in_memory_filter=post_filters._to_filter(post=True))
     return dsquery
 
   @tasklets.tasklet
@@ -936,6 +952,10 @@ class Query(object):
       rpc = dsquery.run_async(conn, options)
       while rpc is not None:
         batch = yield rpc
+        if (batch.skipped_results and
+            datastore_query.FetchOptions.offset(options)):
+          offset = options.offset - batch.skipped_results
+          options = datastore_query.FetchOptions(offset=offset, config=options)
         rpc = batch.next_batch_async(options)
         for i, result in enumerate(batch.results):
           queue.putq((batch, i, result))
@@ -1110,7 +1130,7 @@ class Query(object):
     Returns:
       A QueryIterator object.
     """
-    self.bind()  #  Raises an exception if there are unbound parameters.
+    self.bind()  # Raises an exception if there are unbound parameters.
     return QueryIterator(self, **q_options)
 
   __iter__ = iter
@@ -1163,11 +1183,11 @@ class Query(object):
     """
     qry = self._fix_namespace()
     return tasklets.get_context().map_query(
-      qry,
-      callback,
-      pass_batch_into_callback=pass_batch_into_callback,
-      options=self._make_options(q_options),
-      merge_future=merge_future)
+        qry,
+        callback,
+        pass_batch_into_callback=pass_batch_into_callback,
+        options=self._make_options(q_options),
+        merge_future=merge_future)
 
   @utils.positional(2)
   def fetch(self, limit=None, **q_options):
@@ -1293,6 +1313,8 @@ class Query(object):
     total = 0
     while rpc is not None:
       batch = yield rpc
+      options = QueryOptions(offset=options.offset - batch.skipped_results,
+                             config=options)
       rpc = batch.next_batch_async(options)
       total += batch.skipped_results
     raise tasklets.Return(total)
@@ -1376,7 +1398,7 @@ class Query(object):
     if q_options.get('projection'):
       try:
         q_options['projection'] = self._to_property_names(
-          q_options['projection'])
+            q_options['projection'])
       except TypeError, e:
         raise datastore_errors.BadArgumentError(e)
       self._check_properties(q_options['projection'])
@@ -1387,7 +1409,7 @@ class Query(object):
         options.projection is None and
         self.__projection):
       options = QueryOptions(
-        projection=self._to_property_names(self.__projection), config=options)
+          projection=self._to_property_names(self.__projection), config=options)
     # Populate default options
     if self.default_options is not None:
       options = self.default_options.merge(options)
@@ -1416,6 +1438,7 @@ class Query(object):
   def analyze(self):
     """Return a list giving the parameters required by a query."""
     class MockBindings(dict):
+
       def __contains__(self, key):
         self[key] = None
         return True
@@ -1451,8 +1474,8 @@ class Query(object):
         unused.append(i)
     if unused:
       raise datastore_errors.BadArgumentError(
-        'Positional arguments %s were given but not used.' %
-        ', '.join(str(i) for i in unused))
+          'Positional arguments %s were given but not used.' %
+          ', '.join(str(i) for i in unused))
     return self.__class__(kind=self.kind, ancestor=ancestor,
                           filters=filters, orders=self.orders,
                           app=self.app, namespace=self.namespace,
@@ -1496,7 +1519,8 @@ def _gql(query_string, query_class=Query):
     # construct the results).
     modelclass = model.Expando
   else:
-    modelclass = model.Model._lookup_model(kind,
+    modelclass = model.Model._lookup_model(
+        kind,
         tasklets.get_context()._conn.adapter.default_model)
     # Adjust kind to the kind of the model class.
     kind = modelclass._get_kind()
@@ -1594,12 +1618,16 @@ class QueryIterator(object):
   options.
   """
 
-  # When produce_cursors is set, _lookahead collects (batch, index)
-  # pairs passed to _extended_callback(), and (_batch, _index)
-  # contain the info pertaining to the current item.
-  _lookahead = None
-  _batch = None
-  _index = None
+  # Information from the current result.
+  _cursor_before = _cursor_after = (
+      datastore_errors.BadArgumentError('There is no cursor currently'))
+
+  # Information from the current batch.
+  _index_list = None
+  # More results is true if the current batch has more results. A query result
+  # may be made of multiple batches from multiple queries, so this field may
+  # be false even if there are more results.
+  _more_results = None
 
   # Indicate the loop is exhausted.
   _exhausted = False
@@ -1622,17 +1650,30 @@ class QueryIterator(object):
   def _extended_callback(self, batch, index, ent):
     if self._exhausted:
       raise RuntimeError('QueryIterator is already exhausted')
-    # TODO: Make _lookup a deque.
-    if self._lookahead is None:
-      self._lookahead = []
-    self._lookahead.append((batch, index))
-    return ent
 
-  def _consume_item(self):
-    if self._lookahead:
-      self._batch, self._index = self._lookahead.pop(0)
-    else:
-      self._batch = self._index = None
+    # If the batch is None we cannot get any extra information.
+    # This is the case for _MultiQuery.
+    if batch is None:
+      return (ent, None, None, None)
+
+    if self._index_list is None:
+      self._index_list = getattr(batch, 'index_list', None)
+
+    # more_results is True if we are mid-batch or at the end of a batch and
+    # the batch reports that there are more batches.
+    more_results = index + 1 < len(batch.results) or batch.more_results
+
+    before_cursor = None
+    after_cursor = None
+    try:
+      before_cursor = batch.cursor(index)
+    except BaseException, e:
+      before_cursor = e
+    try:
+      after_cursor = batch.cursor(index + 1)
+    except BaseException, e:
+      after_cursor = e
+    return (ent, before_cursor, after_cursor, more_results)
 
   def cursor_before(self):
     """Return the cursor before the current item.
@@ -1644,14 +1685,11 @@ class QueryIterator(object):
     Before next() has returned there is no cursor.  Once the loop is
     exhausted, this returns the cursor after the last item.
     """
-    if self._batch is None:
-      raise datastore_errors.BadArgumentError('There is no cursor currently')
-    # TODO: if cursor_after() was called for the previous item
-    # reuse that result instead of computing it from scratch.
-    # (Some cursor() calls make a datastore roundtrip.)
-    # TODO: reimplement the cursor() call to use NDB async I/O;
-    # perhaps even add async versions of cursor_before/after.
-    return self._batch.cursor(self._index + self._exhausted)
+    if self._exhausted:
+      return self.cursor_after()
+    if isinstance(self._cursor_before, BaseException):
+      raise self._cursor_before
+    return self._cursor_before
 
   def cursor_after(self):
     """Return the cursor after the current item.
@@ -1663,9 +1701,9 @@ class QueryIterator(object):
     Before next() has returned there is no cursor.    Once the loop is
     exhausted, this returns the cursor after the last item.
     """
-    if self._batch is None:
-      raise datastore_errors.BadArgumentError('There is no cursor currently')
-    return self._batch.cursor(self._index + 1)  # TODO: inline this as async.
+    if isinstance(self._cursor_after, BaseException):
+      raise self._cursor_after
+    return self._cursor_after
 
   def index_list(self):
     """Return the list of indexes used for this query.
@@ -1698,7 +1736,7 @@ class QueryIterator(object):
     # multi-query by merging all the index lists from each subquery.
     # Return None if the batch has no attribute index_list.
     # This also applies when the batch itself is None.
-    return getattr(self._batch, 'index_list', None)
+    return self._index_list
 
   def __iter__(self):
     """Iterator protocol: get the iterator for this iterator, i.e. self."""
@@ -1707,16 +1745,17 @@ class QueryIterator(object):
   def probably_has_next(self):
     """Return whether a next item is (probably) available.
 
-    This is not quite the same as has_next(), because when
+     This is not quite the same as has_next(), because when
     produce_cursors is set, some shortcuts are possible.  However, in
     some cases (e.g. when the query has a post_filter) we can get a
     false positive (returns True but next() will raise StopIteration).
-    There are no false negatives, if Batch.more_results doesn't lie.
-    """
-    if self._lookahead:
+    There are no false negatives."""
+    # Due to the fact that _MultiQuery batches incorrectly report more_results,
+    # _more_results may be False even if there are more results. Likewise due
+    # to post filtering, _more_results may be True even if next() would throw
+    # an exception.
+    if self._more_results:
       return True
-    if self._batch is not None:
-      return self._batch.more_results
     return self.has_next()
 
   def has_next(self):
@@ -1747,8 +1786,13 @@ class QueryIterator(object):
       self._fut = self._iter.getq()
     try:
       try:
-        ent = self._fut.get_result()
-        self._consume_item()
+        # The future result is set by this class's _extended_callback
+        # method.
+        # pylint: disable=unpacking-non-sequence
+        (ent,
+         self._cursor_before,
+         self._cursor_after,
+         self._more_results) = self._fut.get_result()
         return ent
       except EOFError:
         self._exhausted = True
@@ -1780,8 +1824,8 @@ class _SubQueryIteratorState(object):
                                 (self.orders, other.orders))
     lhs = self.entity._orig_pb
     rhs = other.entity._orig_pb
-    lhs_filter = self.dsquery._filter_predicate
-    rhs_filter = other.dsquery._filter_predicate
+    lhs_filter = self.dsquery.filter_predicate
+    rhs_filter = other.dsquery.filter_predicate
     names = self.orders._get_prop_names()
     # TODO: In some future version, there won't be a need to add the
     # filters' names.
@@ -1869,7 +1913,7 @@ class _MultiQuery(object):
           names = self.__orders._get_prop_names()
         if '__key__' not in names:
           raise datastore_errors.BadArgumentError(
-            '_MultiQuery with cursors requires __key__ order')
+              '_MultiQuery with cursors requires __key__ order')
 
     # Decide if we need to modify the options passed to subqueries.
     # NOTE: It would seem we can sometimes let the datastore handle

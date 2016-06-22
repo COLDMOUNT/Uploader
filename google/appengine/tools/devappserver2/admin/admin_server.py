@@ -17,13 +17,13 @@
 """Run a server displaying the administrative UI for the application."""
 
 
+
 import logging
-import os.path
 
 import google
-import jinja2
 import webapp2
 
+from google.appengine.tools.devappserver2 import wsgi_server
 from google.appengine.tools.devappserver2.admin import admin_request_handler
 from google.appengine.tools.devappserver2.admin import blobstore_viewer
 from google.appengine.tools.devappserver2.admin import console
@@ -40,7 +40,6 @@ from google.appengine.tools.devappserver2.admin import static_file_handler
 from google.appengine.tools.devappserver2.admin import taskqueue_queues_handler
 from google.appengine.tools.devappserver2.admin import taskqueue_tasks_handler
 from google.appengine.tools.devappserver2.admin import xmpp_request_handler
-from google.appengine.tools.devappserver2 import wsgi_server
 
 
 class AdminApplication(webapp2.WSGIApplication):

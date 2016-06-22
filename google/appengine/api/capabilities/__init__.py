@@ -55,6 +55,7 @@ Classes defined here:
 
 
 
+
 import warnings
 
 from google.appengine.api.capabilities import capability_service_pb
@@ -105,7 +106,8 @@ class CapabilitySet(object):
       UnknownCapabilityError, if a specified capability was not recognized.
     """
     config = self._get_status()
-    return config.summary_status() in (IsEnabledResponse.ENABLED,
+    return config.summary_status() in (IsEnabledResponse.DEFAULT,
+                                       IsEnabledResponse.ENABLED,
                                        IsEnabledResponse.SCHEDULED_FUTURE,
                                        IsEnabledResponse.SCHEDULED_NOW)
 
@@ -133,7 +135,8 @@ class CapabilitySet(object):
     config = self._get_status()
 
     status = config.summary_status()
-    if status == IsEnabledResponse.ENABLED:
+
+    if status in (IsEnabledResponse.DEFAULT, IsEnabledResponse.ENABLED):
       return True
     elif status == IsEnabledResponse.SCHEDULED_NOW:
       return False

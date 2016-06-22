@@ -20,6 +20,7 @@ The Remote API protocol is used for communication.
 """
 
 
+
 import logging
 import os
 import pickle
@@ -99,6 +100,27 @@ _DATASTORE_V4_METHODS = {
                  datastore_v4_pb.RunQueryResponse),
 }
 
+# TODO: Remove after the Files API is really gone.
+_FILESAPI_USE_TRACKER = None
+_FILESAPI_ENABLED = True
+
+
+def enable_filesapi_tracking(request_data):
+  """Turns on per-request tracking of Files API use.
+
+  Args:
+    request_data: An object with a set_filesapi_used(request_id) method to
+        track Files API use.
+  """
+  global _FILESAPI_USE_TRACKER
+  _FILESAPI_USE_TRACKER = request_data
+
+
+def set_filesapi_enabled(enabled):
+  """Enables or disables the Files API."""
+  global _FILESAPI_ENABLED
+  _FILESAPI_ENABLED = enabled
+
 
 def _execute_request(request):
   """Executes an API method call and returns the response object.
@@ -135,12 +157,23 @@ def _execute_request(request):
     raise apiproxy_errors.CallNotFoundError('%s.%s does not exist' % (service,
                                                                       method))
 
+  # TODO: Remove after the Files API is really gone.
+  if not _FILESAPI_ENABLED and service == 'file':
+    raise apiproxy_errors.CallNotFoundError(
+        'Files API method %s.%s is disabled. Further information: '
+        'https://cloud.google.com/appengine/docs/deprecations/files_api'
+        % (service, method))
+
   request_data = request_class()
   request_data.ParseFromString(request.request())
   response_data = response_class()
   service_stub = apiproxy_stub_map.apiproxy.GetStub(service)
 
   def make_request():
+    # TODO: Remove after the Files API is really gone.
+    if (_FILESAPI_USE_TRACKER is not None
+        and service == 'file' and request_id is not None):
+      _FILESAPI_USE_TRACKER.set_filesapi_used(request_id)
     service_stub.MakeSyncCall(service,
                               method,
                               request_data,
@@ -164,6 +197,7 @@ class APIServer(wsgi_server.WsgiServer):
     self._app_id = app_id
     self._host = host
     super(APIServer, self).__init__((host, port), self)
+    self.set_balanced_address('localhost:8080')
 
   def start(self):
     """Start the API Server."""
@@ -173,6 +207,16 @@ class APIServer(wsgi_server.WsgiServer):
   def quit(self):
     cleanup_stubs()
     super(APIServer, self).quit()
+
+  def set_balanced_address(self, balanced_address):
+    """Sets the balanced address from the dispatcher (e.g. "localhost:8080").
+
+    This is used to enable APIs to build valid URLs.
+
+    Args:
+      balanced_address: string address of the balanced HTTP server.
+    """
+    self._balanced_address = balanced_address
 
   def _handle_POST(self, environ, start_response):
     start_response('200 OK', [('Content-Type', 'application/octet-stream')])
@@ -192,6 +236,14 @@ class APIServer(wsgi_server.WsgiServer):
       else:
         wsgi_input = environ['wsgi.input'].read(int(environ['CONTENT_LENGTH']))
       request.ParseFromString(wsgi_input)
+      if request.has_request_id():
+        request_id = request.request_id()
+        service = request.service_name()
+        service_stub = apiproxy_stub_map.apiproxy.GetStub(service)
+        environ['HTTP_HOST'] = self._balanced_address
+        op = getattr(service_stub.request_data, 'register_request_id', None)
+        if callable(op):
+          op(environ, request_id)
       api_response = _execute_request(request).Encode()
       response.set_response(api_response)
     except Exception, e:
@@ -207,7 +259,12 @@ class APIServer(wsgi_server.WsgiServer):
         # Even if the runtime is Python, the exception may be unpicklable if
         # it requires importing a class blocked by the sandbox so just send
         # back the exception representation.
-        e = RuntimeError(repr(e))
+        # But due to our use of the remote API, at least some apiproxy errors
+        # are generated in the Dev App Server main instance and not in the
+        # language runtime and wrapping them causes different behavior from
+        # prod so don't wrap them.
+        if not isinstance(e, apiproxy_errors.Error):
+          e = RuntimeError(repr(e))
       # While not strictly necessary for ApplicationError, do this to limit
       # differences with remote_api:handler.py.
       response.set_exception(pickle.dumps(e))
@@ -258,13 +315,15 @@ def setup_stubs(
     mail_smtp_password,
     mail_enable_sendmail,
     mail_show_mail_body,
+    mail_allow_tls,
     matcher_prospective_search_path,
     search_index_path,
     taskqueue_auto_run_tasks,
     taskqueue_default_http_server,
     user_login_url,
     user_logout_url,
-    default_gcs_bucket_name):
+    default_gcs_bucket_name,
+    appidentity_oauth_url=None):
   """Configures the APIs hosted by this server.
 
   Args:
@@ -311,6 +370,9 @@ def setup_stubs(
         sending e-mails. This argument is ignored if mail_smtp_host is not None.
     mail_show_mail_body: A bool indicating whether the body of sent e-mails
         should be written to the logs.
+    mail_allow_tls: A bool indicating whether TLS should be allowed when
+        communicating with an SMTP server. This argument is ignored if
+        mail_smtp_host is None.
     matcher_prospective_search_path: The path to the file that should be used to
         save prospective search subscriptions.
     search_index_path: The path to the file that should be used for search index
@@ -323,11 +385,18 @@ def setup_stubs(
     user_logout_url: A str containing the url that should be used for user
         logout.
     default_gcs_bucket_name: A str, overriding the default bucket behavior.
+    appidentity_oauth_url: A str containing the url to the oauth2 server to use
+        to authenticate the private key. If set to None, then the standard
+        google oauth2 server is used.
   """
+
+
+
 
   identity_stub = app_identity_stub.AppIdentityServiceStub.Create(
       email_address=appidentity_email_address,
-      private_key_path=appidentity_private_key_path)
+      private_key_path=appidentity_private_key_path,
+      oauth_url=appidentity_oauth_url)
   if default_gcs_bucket_name is not None:
     identity_stub.SetDefaultGcsBucketName(default_gcs_bucket_name)
   apiproxy_stub_map.apiproxy.RegisterStub('app_identity_service', identity_stub)
@@ -371,8 +440,9 @@ def setup_stubs(
     from google.appengine.api.images import images_stub
   except ImportError:
 
-    logging.warning('Could not initialize images API; you are likely missing '
-                    'the Python "PIL" module.')
+
+
+
     # We register a stub which throws a NotImplementedError for most RPCs.
     from google.appengine.api.images import images_not_implemented_stub
     apiproxy_stub_map.apiproxy.RegisterStub(
@@ -395,7 +465,8 @@ def setup_stubs(
                                 mail_smtp_user,
                                 mail_smtp_password,
                                 enable_sendmail=mail_enable_sendmail,
-                                show_mail_body=mail_show_mail_body))
+                                show_mail_body=mail_show_mail_body,
+                                allow_tls=mail_allow_tls))
 
   apiproxy_stub_map.apiproxy.RegisterStub(
       'memcache',
@@ -507,6 +578,8 @@ def test_setup_stubs(
     trusted=False,
     appidentity_email_address=None,
     appidentity_private_key_path=None,
+    # TODO: is this correct? If I'm following the flow correctly, this
+    # should not be a file but a directory.
     blobstore_path='/dev/null',
     datastore_consistency=None,
     datastore_path=':memory:',
@@ -520,13 +593,15 @@ def test_setup_stubs(
     mail_smtp_password='',
     mail_enable_sendmail=False,
     mail_show_mail_body=False,
-    matcher_prospective_search_path='/dev/null',
+    mail_allow_tls=True,
+    matcher_prospective_search_path=os.devnull,
     search_index_path=None,
     taskqueue_auto_run_tasks=False,
     taskqueue_default_http_server='http://localhost:8080',
     user_login_url='/_ah/login?continue=%s',
     user_logout_url='/_ah/login?continue=%s',
-    default_gcs_bucket_name=None):
+    default_gcs_bucket_name=None,
+    appidentity_oauth_url=None):
   """Similar to setup_stubs with reasonable test defaults and recallable."""
 
   # Reset the stub map between requests because a stub map only allows a
@@ -556,13 +631,15 @@ def test_setup_stubs(
               mail_smtp_password,
               mail_enable_sendmail,
               mail_show_mail_body,
+              mail_allow_tls,
               matcher_prospective_search_path,
               search_index_path,
               taskqueue_auto_run_tasks,
               taskqueue_default_http_server,
               user_login_url,
               user_logout_url,
-              default_gcs_bucket_name)
+              default_gcs_bucket_name,
+              appidentity_oauth_url)
 
 
 def cleanup_stubs():

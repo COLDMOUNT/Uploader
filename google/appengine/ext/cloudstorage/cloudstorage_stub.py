@@ -19,6 +19,7 @@
 
 
 
+
 import calendar
 import datetime
 import hashlib
@@ -32,7 +33,7 @@ from google.appengine.ext import db
 from google.appengine.ext.cloudstorage import common
 
 
-_GCS_DEFAULT_CONTENT_TYPE = 'binary/octet-stream'
+_GCS_DEFAULT_CONTENT_TYPE = 'application/octet-stream'
 
 
 

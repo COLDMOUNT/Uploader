@@ -29,6 +29,7 @@
 
 
 
+
 import base64
 import bisect
 import copy
@@ -56,6 +57,7 @@ from google.appengine.api.search import search_service_pb
 from google.appengine.api.search import search_util
 from google.appengine.api.search.stub import document_matcher
 from google.appengine.api.search.stub import expression_evaluator
+from google.appengine.api.search.stub import simple_facet
 from google.appengine.api.search.stub import simple_tokenizer
 from google.appengine.api.search.stub import tokens
 from google.appengine.runtime import apiproxy_errors
@@ -326,12 +328,32 @@ class RamInvertedIndex(object):
   def _AddTokens(self, doc_id, field_name, field_value, token_position):
     """Adds token occurrences for a given doc's field value."""
     for token in self._tokenizer.TokenizeValue(field_value, token_position):
-      self._AddToken(doc_id, token)
-      self._AddToken(doc_id, token.RestrictField(field_name))
+      if (field_value.type() == document_pb.FieldValue.UNTOKENIZED_PREFIX or
+          field_value.type() == document_pb.FieldValue.TOKENIZED_PREFIX):
+        for token in self._ExtractPrefixTokens(token):
+          self._AddToken(doc_id, token.RestrictField(field_name))
+      else:
+        self._AddToken(doc_id, token)
+        self._AddToken(doc_id, token.RestrictField(field_name))
+
+  def _ExtractPrefixTokens(self, token):
+    """Extracts the prefixes from a term."""
+    term = token.chars.strip()
+    prefix_tokens = []
+    for i in range(0, len(term)):
+
+      if term[i]:
+        prefix_tokens.append(tokens.Token(chars=term[:i+1],
+                                          position=token.position))
+    return prefix_tokens
 
   def _RemoveTokens(self, doc_id, field_name, field_value):
     """Removes tokens occurrences for a given doc's field value."""
     for token in self._tokenizer.TokenizeValue(field_value=field_value):
+      if (field_value.type() == document_pb.FieldValue.UNTOKENIZED_PREFIX or
+          field_value.type() == document_pb.FieldValue.TOKENIZED_PREFIX):
+        for token in self._ExtractPrefixTokens(token):
+          self._RemoveToken(doc_id, token.RestrictField(field_name))
       self._RemoveToken(doc_id, token)
       self._RemoveToken(doc_id, token.RestrictField(field_name))
 
@@ -359,6 +381,10 @@ class RamInvertedIndex(object):
   def GetSchema(self):
     """Returns the schema for the index."""
     return self._schema
+
+  def DeleteSchema(self):
+    """Deletes the schema for the index."""
+    self._schema = FieldTypesDict()
 
   def __repr__(self):
     return search_util.Repr(self, [('_inverted_index', self._inverted_index),
@@ -418,12 +444,18 @@ class SimpleIndex(object):
   def DeleteDocuments(self, document_ids, response):
     """Deletes documents for the given document_ids."""
     for document_id in document_ids:
-      if document_id in self._documents:
-        document = self._documents[document_id]
-        self._inverted_index.RemoveDocument(document)
-        del self._documents[document_id]
-      delete_status = response.add_status()
+      self.DeleteDocument(document_id, response.add_status())
+
+  def DeleteDocument(self, document_id, delete_status):
+    """Deletes the document, if any, with the given document_id."""
+    if document_id in self._documents:
+      document = self._documents[document_id]
+      self._inverted_index.RemoveDocument(document)
+      del self._documents[document_id]
       delete_status.set_code(search_service_pb.SearchServiceError.OK)
+    else:
+      delete_status.set_code(search_service_pb.SearchServiceError.OK)
+      delete_status.set_error_detail('Not found')
 
   def Documents(self):
     """Returns the documents in the index."""
@@ -507,11 +539,15 @@ class SimpleIndex(object):
 
   def _Sort(self, docs, search_params, query, score):
     """Return sorted docs with score or evaluated search_params as sort key."""
-    if score:
-      return sorted(docs, key=lambda doc: doc.score, reverse=True)
+
+
+
+    docs = sorted(docs, key=lambda doc: doc.document.order_id(), reverse=True)
 
     if not search_params.sort_spec_size():
-      return sorted(docs, key=lambda doc: doc.document.order_id(), reverse=True)
+      if score:
+        return sorted(docs, key=lambda doc: doc.score, reverse=True)
+      return docs
 
     def SortKey(scored_doc):
       """Return the sort key for a document based on the request parameters.
@@ -529,24 +565,36 @@ class SimpleIndex(object):
       """
       expr_vals = []
       for sort_spec in search_params.sort_spec_list():
-        if not (sort_spec.has_default_value_text() or
-                sort_spec.has_default_value_numeric()):
-          raise Exception('A default value must be specified for sorting.')
-        elif sort_spec.has_default_value_text():
-          default_value = sort_spec.default_value_text()
-        else:
-          default_value = sort_spec.default_value_numeric()
+        default_text = None
+        default_numeric = None
+        if sort_spec.has_default_value_text():
+          default_text = sort_spec.default_value_text()
+        if sort_spec.has_default_value_numeric():
+          default_numeric = sort_spec.default_value_numeric()
         try:
-          val = expression_evaluator.ExpressionEvaluator(
+          text_val = expression_evaluator.ExpressionEvaluator(
               scored_doc, self._inverted_index, True).ValueOf(
-                  sort_spec.sort_expression(), default_value=default_value)
-        except expression_evaluator.ExpressionEvaluationError, e:
-          raise query_parser.QueryException(
+                  sort_spec.sort_expression(), default_value=default_text,
+                  return_type=search_util.EXPRESSION_RETURN_TYPE_TEXT)
+          num_val = expression_evaluator.ExpressionEvaluator(
+              scored_doc, self._inverted_index, True).ValueOf(
+                  sort_spec.sort_expression(), default_value=default_numeric,
+                  return_type=search_util.EXPRESSION_RETURN_TYPE_NUMERIC)
+        except expression_evaluator.QueryExpressionEvaluationError, e:
+          raise expression_evaluator.ExpressionEvaluationError(
               _FAILED_TO_PARSE_SEARCH_REQUEST % (query, e))
+        if isinstance(num_val, datetime.datetime):
+          num_val = search_util.EpochTime(num_val)
 
-        if isinstance(val, datetime.datetime):
-          val = search_util.EpochTime(val)
-        expr_vals.append(val)
+
+        elif isinstance(text_val, datetime.datetime):
+          num_val = search_util.EpochTime(text_val)
+
+        if text_val is None:
+          text_val = ''
+        if num_val is None:
+          num_val = 0
+        expr_vals.append([text_val, num_val])
       return tuple(expr_vals)
 
     def SortCmp(x, y):
@@ -590,6 +638,10 @@ class SimpleIndex(object):
   def GetSchema(self):
     """Returns the schema for the index."""
     return self._inverted_index.GetSchema()
+
+  def DeleteSchema(self):
+    """Deletes the schema for the index."""
+    self._inverted_index.DeleteSchema()
 
   def __repr__(self):
     return search_util.Repr(self, [('_index_spec', self._index_spec),
@@ -636,7 +688,9 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
 
   def _UnknownIndex(self, status, index_spec):
     status.set_code(search_service_pb.SearchServiceError.OK)
-    status.set_error_detail('no index for %r' % index_spec)
+    status.set_error_detail(
+        "Index '%s' in namespace '%s' does not exist" %
+        (index_spec.name(), index_spec.namespace()))
 
   def _GetNamespace(self, namespace):
     """Get namespace name.
@@ -656,12 +710,9 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
     namespace = self._GetNamespace(index_spec.namespace())
 
     index = self.__indexes.setdefault(namespace, {}).get(index_spec.name())
-    if index is None:
-      if create:
-        index = SimpleIndex(index_spec)
-        self.__indexes[namespace][index_spec.name()] = index
-      else:
-        return None
+    if index is None and create:
+      index = SimpleIndex(index_spec)
+      self.__indexes[namespace][index_spec.name()] = index
     return index
 
   def _Dynamic_IndexDocument(self, request, response):
@@ -687,10 +738,13 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
     params = request.params()
     index_spec = params.index_spec()
     index = self._GetIndex(index_spec)
-    if index is None:
-      self._UnknownIndex(response.add_status(), index_spec)
-      return
-    index.DeleteDocuments(params.doc_id_list(), response)
+    for document_id in params.doc_id_list():
+      delete_status = response.add_status()
+      if index is None:
+        delete_status.set_code(search_service_pb.SearchServiceError.OK)
+        delete_status.set_error_detail('Not found')
+      else:
+        index.DeleteDocument(document_id, delete_status)
 
   def _Dynamic_ListIndexes(self, request, response):
     """A local implementation of SearchService.ListIndexes RPC.
@@ -756,6 +810,21 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
         self._AddSchemaInformation(index, metadata)
       self._AddStorageInformation(index, metadata)
 
+  def _Dynamic_DeleteSchema(self, request, response):
+    """A local implementation of SearchService.DeleteSchema RPC.
+
+    Args:
+      request: A search_service_pb.DeleteSchemaRequest.
+      response: An search_service_pb.DeleteSchemaResponse.
+    """
+
+    params = request.params()
+    for index_spec in params.index_spec_list():
+      index = self._GetIndex(index_spec)
+      if index is not None:
+        index.DeleteSchema()
+      response.add_status().set_code(search_service_pb.SearchServiceError.OK)
+
   def _AddSchemaInformation(self, index, metadata_pb):
     schema = index.GetSchema()
     for name in schema:
@@ -791,9 +860,10 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
       response: An search_service_pb.ListDocumentsResponse.
     """
     params = request.params()
-    index = self._GetIndex(params.index_spec(), create=True)
+    index = self._GetIndex(params.index_spec())
     if index is None:
-      self._UnknownIndex(response.mutable_status(), params.index_spec())
+      response.mutable_status().set_code(
+          search_service_pb.SearchServiceError.OK)
       return
 
     num_docs = 0
@@ -920,7 +990,7 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
         if (isinstance(expression, float) or
             isinstance(expression, long) or
             isinstance(expression, int)):
-          expr.mutable_value().set_string_value(str(expression))
+          expr.mutable_value().set_string_value(repr(float(expression)))
           expr.mutable_value().set_type(document_pb.FieldValue.NUMBER)
         else:
           expr.mutable_value().set_string_value(expression)
@@ -937,7 +1007,6 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
       self._RandomSearchResponse(request, response)
       return
 
-    index = None
     index = self._GetIndex(request.params().index_spec())
     if index is None:
       self._UnknownIndex(response.mutable_status(),
@@ -952,12 +1021,18 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
       self._InvalidRequest(response.mutable_status(), e)
       response.set_matched_count(0)
       return
+    except expression_evaluator.ExpressionEvaluationError, e:
+      self._InvalidRequest(response.mutable_status(), e)
+      response.set_matched_count(0)
+      return
     except document_matcher.ExpressionTreeException, e:
       self._InvalidRequest(response.mutable_status(), e)
       response.set_matched_count(0)
       return
-    response.set_matched_count(len(results))
 
+    facet_analyzer = simple_facet.SimpleFacet(params)
+    results = facet_analyzer.RefineResults(results)
+    response.set_matched_count(len(results))
     offset = 0
     if params.has_cursor():
       try:
@@ -998,6 +1073,7 @@ class SearchServiceStub(apiproxy_stub.APIProxyStub):
     self._FillSearchResponse(results, result_range, params.cursor_type(),
                              _ScoreRequested(params), response, field_names,
                              params.keys_only())
+    facet_analyzer.FillFacetResponse(results, response)
 
     response.mutable_status().set_code(search_service_pb.SearchServiceError.OK)
 

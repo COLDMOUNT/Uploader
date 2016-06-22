@@ -21,6 +21,7 @@
 """Search API module."""
 
 from search import AtomField
+from search import AtomFacet
 from search import Cursor
 from search import DateField
 from search import DeleteError
@@ -29,11 +30,19 @@ from search import Document
 from search import DOCUMENT_ID_FIELD_NAME
 from search import Error
 from search import ExpressionError
+from search import Facet
+from search import FacetOptions
+from search import FacetRange
+from search import FacetRefinement
+from search import FacetRequest
+from search import FacetResult
+from search import FacetResultValue
 from search import Field
 from search import FieldExpression
 from search import GeoField
 from search import GeoPoint
 from search import get_indexes
+from search import get_indexes_async
 from search import GetResponse
 from search import HtmlField
 from search import Index
@@ -44,9 +53,13 @@ from search import MatchScorer
 from search import MAXIMUM_DOCUMENT_ID_LENGTH
 from search import MAXIMUM_DOCUMENTS_PER_PUT_REQUEST
 from search import MAXIMUM_DOCUMENTS_RETURNED_PER_SEARCH
+from search import MAXIMUM_DEPTH_FOR_FACETED_SEARCH
+from search import MAXIMUM_FACETS_TO_RETURN
+from search import MAXIMUM_FACET_VALUES_TO_RETURN
 from search import MAXIMUM_EXPRESSION_LENGTH
 from search import MAXIMUM_FIELD_ATOM_LENGTH
 from search import MAXIMUM_FIELD_NAME_LENGTH
+from search import MAXIMUM_FIELD_PREFIX_LENGTH
 from search import MAXIMUM_FIELD_VALUE_LENGTH
 from search import MAXIMUM_FIELDS_RETURNED_PER_SEARCH
 from search import MAXIMUM_GET_INDEXES_OFFSET
@@ -57,6 +70,7 @@ from search import MAXIMUM_QUERY_LENGTH
 from search import MAXIMUM_SEARCH_OFFSET
 from search import MAXIMUM_SORTED_DOCUMENTS
 from search import NumberField
+from search import NumberFacet
 from search import OperationResult
 from search import PutError
 from search import PutResult
@@ -72,4 +86,9 @@ from search import SortExpression
 from search import SortOptions
 from search import TextField
 from search import TIMESTAMP_FIELD_NAME
+from search import TokenizedPrefixField
 from search import TransientError
+from search import UntokenizedPrefixField
+from search import VECTOR_FIELD_MAX_SIZE
+from search import VectorField
+

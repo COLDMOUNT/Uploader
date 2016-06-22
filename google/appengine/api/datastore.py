@@ -44,6 +44,7 @@ which needs BadValueError, so it can't be defined in datastore.
 
 
 
+
 import heapq
 import itertools
 import logging
@@ -231,6 +232,9 @@ class _BaseIndex(object):
   BUILDING, SERVING, DELETING, ERROR = range(4)
 
 
+
+
+
   ASCENDING = datastore_query.PropertyOrder.ASCENDING
   DESCENDING = datastore_query.PropertyOrder.DESCENDING
 
@@ -334,6 +338,9 @@ class DatastoreAdapter(datastore_rpc.AbstractAdapter):
           entity_pb.Index_Property.DESCENDING: Index.DESCENDING
       }
 
+  def __init__(self, _id_resolver=None):
+    super(DatastoreAdapter, self).__init__(_id_resolver)
+
   def key_to_pb(self, key):
     return key._Key__reference
 
@@ -380,7 +387,11 @@ def __InitConnection():
 
   if os.getenv(_ENV_KEY) and hasattr(_thread_local, 'connection_stack'):
     return
-  _thread_local.connection_stack = [datastore_rpc.Connection(adapter=_adapter)]
+
+  _thread_local.connection_stack = [
+      datastore_rpc._CreateDefaultConnection(datastore_rpc.Connection,
+                                             adapter=_adapter)]
+
 
   os.environ[_ENV_KEY] = '1'
 
@@ -967,13 +978,18 @@ class Entity(dict):
       propname_xml = saxutils.quoteattr(propname)
 
       values = self[propname]
+      if isinstance(values, list) and not values:
+
+
+
+        continue
       if not isinstance(values, list):
         values = [values]
 
       proptype = datastore_types.PropertyTypeName(values[0])
       proptype_xml = saxutils.quoteattr(proptype)
-
       escaped_values = self._XmlEscapeValues(propname)
+
       open_tag = u'<property name=%s type=%s>' % (propname_xml, proptype_xml)
       close_tag = u'</property>'
       xml_properties += [open_tag + val + close_tag for val in escaped_values]
@@ -1207,8 +1223,8 @@ class Query(dict):
   > query['name ='] = 'Ryan'
   > query['age >='] = 21
 
-  This query returns all Person entities where the name property is 'Ryan',
-  'Ken', or 'Bret', and the age property is at least 21.
+  This query returns all Person entities where the name property is 'Ryan'
+  and the age property is at least 21.
 
   Another way to build this query is:
 
@@ -1833,6 +1849,8 @@ class Query(dict):
       re.MatchObject (never None) that matches the 'filter'. Group 1 is the
       property name, group 3 is the operator. (Group 2 is unused.)
     """
+    if isinstance(values, list) and not values:
+      raise datastore_errors.BadValueError("Cannot filter on []")
     try:
       match = Query.FILTER_REGEX.match(filter)
       if not match:

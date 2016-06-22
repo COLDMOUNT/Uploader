@@ -17,6 +17,7 @@
 """The main entry point for the new development server."""
 
 
+
 import argparse
 import errno
 import getpass
@@ -28,17 +29,20 @@ import tempfile
 import time
 
 from google.appengine.api import appinfo
+from google.appengine.api import request_info
 from google.appengine.datastore import datastore_stub_util
 from google.appengine.tools import boolean_action
-from google.appengine.tools.devappserver2.admin import admin_server
 from google.appengine.tools.devappserver2 import api_server
 from google.appengine.tools.devappserver2 import application_configuration
 from google.appengine.tools.devappserver2 import dispatcher
+from google.appengine.tools.devappserver2 import gcd_application
 from google.appengine.tools.devappserver2 import login
 from google.appengine.tools.devappserver2 import runtime_config_pb2
+from google.appengine.tools.devappserver2 import runtime_factories
 from google.appengine.tools.devappserver2 import shutdown
 from google.appengine.tools.devappserver2 import update_checker
 from google.appengine.tools.devappserver2 import wsgi_request_info
+from google.appengine.tools.devappserver2.admin import admin_server
 
 # Initialize logging early -- otherwise some library packages may
 # pre-empt our log formatting.  NOTE: the level is provisional; it may
@@ -69,6 +73,9 @@ _LOG_LEVEL_TO_PYTHON_CONSTANT = {
 
 # The default encoding used by the production interpreter.
 _PROD_DEFAULT_ENCODING = 'ascii'
+
+# The environment variable exposed in the devshell.
+_DEVSHELL_ENV = 'DEVSHELL_CLIENT_PORT'
 
 
 def _generate_storage_paths(app_id):
@@ -121,92 +128,6 @@ def _get_storage_path(path, app_id):
                   'expected' % path)
   else:
     return path
-
-
-def _get_default_php_path():
-  """Returns the path to the siloed php-cgi binary or None if not present."""
-  default_php_executable_path = None
-  if sys.platform == 'win32':
-    default_php_executable_path = os.path.abspath(
-        os.path.join(os.path.dirname(sys.argv[0]),
-                     'php/php-5.4-Win32-VC9-x86/php-cgi.exe'))
-  elif sys.platform == 'darwin':
-    default_php_executable_path = os.path.abspath(
-        os.path.join(
-            os.path.dirname(os.path.dirname(os.path.realpath(sys.argv[0]))),
-            'php-cgi'))
-
-  if (default_php_executable_path and
-      os.path.exists(default_php_executable_path)):
-    return default_php_executable_path
-  return None
-
-
-def _generate_gcd_app(app_id):
-  """Generates an app in tmp for a cloud datastore implementation."""
-  if sys.platform == 'win32':
-    # The temp directory is per-user on Windows so there is no reason to add
-    # the username to the generated directory name.
-    user_format = ''
-  else:
-    try:
-      user_name = getpass.getuser()
-    except Exception:  # The possible set of exceptions is not documented.
-      user_format = ''
-    else:
-      user_format = '.%s' % user_name
-
-  tempdir = tempfile.gettempdir()
-
-  gcd_path = os.path.join(tempdir,
-                          'appengine-gcd-war.%s%s' % (app_id, user_format))
-
-  if not os.path.exists(gcd_path):
-    os.mkdir(gcd_path, 0700)
-    os.mkdir(os.path.join(gcd_path, 'WEB-INF'), 0700)
-
-  with open(os.path.join(gcd_path, 'WEB-INF', 'web.xml'), 'w') as f:
-    f.write("""<?xml version="1.0" encoding="UTF-8"?>
-<web-app xmlns="http://java.sun.com/xml/ns/javaee" version="2.5">
-
-  <security-constraint>
-    <web-resource-collection>
-      <url-pattern>/datastore/*</url-pattern>
-    </web-resource-collection>
-    <user-data-constraint>
-      <transport-guarantee>CONFIDENTIAL</transport-guarantee>
-    </user-data-constraint>
-  </security-constraint>
-
-  <servlet>
-    <servlet-name>DatastoreApiServlet</servlet-name>
-    <servlet-class>
-      com.google.apphosting.client.datastoreservice.app.DatastoreApiServlet
-    </servlet-class>
-    <load-on-startup>1</load-on-startup>
-  </servlet>
-
-  <servlet-mapping>
-    <servlet-name>DatastoreApiServlet</servlet-name>
-    <url-pattern>/datastore/*</url-pattern>
-  </servlet-mapping>
-
-</web-app>""")
-
-  gcd_app_xml = os.path.join(gcd_path, 'WEB-INF', 'appengine-web.xml')
-  with open(gcd_app_xml, 'w') as f:
-    f.write("""<?xml version="1.0" encoding="utf-8"?>
-<appengine-web-app xmlns="http://appengine.google.com/ns/1.0">
-  <application>%s</application>
-  <version>1</version>
-  <module>google-cloud-datastore</module>
-
-  <precompilation-enabled>true</precompilation-enabled>
-  <threadsafe>true</threadsafe>
-
-</appengine-web-app>""" % app_id)
-
-  return gcd_app_xml
 
 
 class PortParser(object):
@@ -374,26 +295,41 @@ def create_command_line_parser():
   parser = argparse.ArgumentParser(
       formatter_class=argparse.ArgumentDefaultsHelpFormatter)
   arg_name = 'yaml_path'
-  arg_help = 'Path to a yaml file, or a directory containing yaml files'
+  arg_help = 'Path to one or more app.yaml files'
   if application_configuration.java_supported():
     arg_name = 'yaml_or_war_path'
     arg_help += ', or a directory containing WEB-INF/web.xml'
   parser.add_argument(
       'config_paths', metavar=arg_name, nargs='+', help=arg_help)
 
+  if _DEVSHELL_ENV in os.environ:
+    default_server_host = '0.0.0.0'
+  else:
+    default_server_host = 'localhost'
+
   common_group = parser.add_argument_group('Common')
   common_group.add_argument(
-      '--host', default='localhost',
+      '-A', '--application', action='store', dest='app_id',
+      help='Set the application, overriding the application value from the '
+      'app.yaml file.')
+  common_group.add_argument(
+      '--host', default=default_server_host,
       help='host name to which application modules should bind')
   common_group.add_argument(
       '--port', type=PortParser(), default=8080,
       help='lowest port to which application modules should bind')
   common_group.add_argument(
-      '--admin_host', default='localhost',
+      '--admin_host', default=default_server_host,
       help='host name to which the admin server should bind')
   common_group.add_argument(
       '--admin_port', type=PortParser(), default=8000,
       help='port to which the admin server should bind')
+  # TODO: Change this. Eventually we want a way to associate ports
+  # with external modules, with default values. For now we allow only one
+  # external module, with a port number that must be passed in here.
+  common_group.add_argument(
+      '--external_port', type=PortParser(), default=None,
+      help=argparse.SUPPRESS)
   common_group.add_argument(
       '--auth_domain', default='gmail.com',
       help='name of the authorization domain to use')
@@ -428,19 +364,28 @@ def create_command_line_parser():
       'can be a boolean, in which case all modules threadsafe setting will '
       'be overridden or a comma-separated list of module:threadsafe_override '
       'e.g. "default:False,backend:True"')
-  common_group.add_argument('--docker_daemon_url', help=argparse.SUPPRESS)
+  common_group.add_argument('--enable_mvm_logs',
+                            action=boolean_action.BooleanAction,
+                            const=True,
+                            default=False,
+                            help=argparse.SUPPRESS)
 
   # PHP
   php_group = parser.add_argument_group('PHP')
   php_group.add_argument('--php_executable_path', metavar='PATH',
                          type=parse_path,
-                         default=_get_default_php_path(),
                          help='path to the PHP executable')
   php_group.add_argument('--php_remote_debugging',
                          action=boolean_action.BooleanAction,
                          const=True,
                          default=False,
                          help='enable XDebug remote debugging')
+  php_group.add_argument('--php_gae_extension_path', metavar='PATH',
+                         type=parse_path,
+                         help='path to the GAE PHP extension')
+  php_group.add_argument('--php_xdebug_extension_path', metavar='PATH',
+                         type=parse_path,
+                         help='path to the xdebug extension')
 
   # App Identity
   appidentity_group = parser.add_argument_group('Application Identity')
@@ -452,6 +397,14 @@ def create_command_line_parser():
       '--appidentity_private_key_path',
       help='path to private key file associated with service account '
       '(.pem format). Must be set if appidentity_email_address is set.')
+  # Supressing the help text, as it is unlikely any typical user outside
+  # of Google has an appropriately set up test oauth server that devappserver2
+  # could talk to.
+  # URL to the oauth server that devappserver2 should  use to authenticate the
+  # appidentity private key (defaults to the standard Google production server.
+  appidentity_group.add_argument(
+      '--appidentity_oauth_url',
+      help=argparse.SUPPRESS)
 
   # Python
   python_group = parser.add_argument_group('Python')
@@ -464,6 +417,30 @@ def create_command_line_parser():
       help='the arguments made available to the script specified in '
       '--python_startup_script.')
 
+  # Java
+  java_group = parser.add_argument_group('Java')
+  java_group.add_argument(
+      '--jvm_flag', action='append',
+      help='additional arguments to pass to the java command when launching '
+      'an instance of the app. May be specified more than once. Example: '
+      '--jvm_flag=-Xmx1024m --jvm_flag=-Xms256m')
+
+  # Custom
+  custom_group = parser.add_argument_group('Custom VM Runtime')
+  custom_group.add_argument(
+      '--custom_entrypoint',
+      help='specify an entrypoint for custom runtime modules. This is '
+      'required when such modules are present. Include "{port}" in the '
+      'string (without quotes) to pass the port number in as an argument. For '
+      'instance: --custom_entrypoint="gunicorn -b localhost:{port} '
+      'mymodule:application"',
+      default='')
+  custom_group.add_argument(
+      '--runtime',
+      help='specify the default runtimes you would like to use.  Valid '
+      'runtimes are %s.' % runtime_factories.valid_runtimes(),
+      default='')
+
   # Blobstore
   blobstore_group = parser.add_argument_group('Blobstore API')
   blobstore_group.add_argument(
@@ -472,6 +449,19 @@ def create_command_line_parser():
       help='path to directory used to store blob contents '
       '(defaults to a subdirectory of --storage_path if not set)',
       default=None)
+  # TODO: Remove after the Files API is really gone.
+  blobstore_group.add_argument(
+      '--blobstore_warn_on_files_api_use',
+      action=boolean_action.BooleanAction,
+      const=True,
+      default=True,
+      help=argparse.SUPPRESS)
+  blobstore_group.add_argument(
+      '--blobstore_enable_files_api',
+      action=boolean_action.BooleanAction,
+      const=True,
+      default=False,
+      help=argparse.SUPPRESS)
 
   # Cloud SQL
   cloud_sql_group = parser.add_argument_group('Cloud SQL')
@@ -584,6 +574,13 @@ def create_command_line_parser():
       '--smtp_password', default='',
       help='password to use when connecting to the SMTP server '
       'specified in --smtp_host and --smtp_port')
+  mail_group.add_argument(
+      '--smtp_allow_tls',
+      action=boolean_action.BooleanAction,
+      const=True,
+      default=True,
+      help='Allow TLS to be used when the SMTP server announces TLS support '
+      '(ignored if --smtp_host is not set)')
 
   # Matcher
   prospective_search_group = parser.add_argument_group('Prospective Search API')
@@ -635,7 +632,7 @@ def create_command_line_parser():
   # No help to avoid lengthening help message for rarely used feature:
   # host name to which the server for API calls should bind.
   misc_group.add_argument(
-      '--api_host', default='localhost',
+      '--api_host', default=default_server_host,
       help=argparse.SUPPRESS)
   misc_group.add_argument(
       '--api_port', type=PortParser(), default=0,
@@ -663,7 +660,12 @@ def create_command_line_parser():
       'decide)')
   misc_group.add_argument(
       '--default_gcs_bucket_name', default=None,
-      help='default Google Cloud Storgage bucket name')
+      help='default Google Cloud Storage bucket name')
+
+
+
+
+
 
 
   return parser
@@ -734,6 +736,8 @@ class DevelopmentServer(object):
   def module_to_address(self, module_name, instance=None):
     """Returns the address of a module."""
 
+
+
     if module_name is None:
       return self._dispatcher.dispatch_address
     return self._dispatcher.get_hostname(
@@ -751,14 +755,14 @@ class DevelopmentServer(object):
         _LOG_LEVEL_TO_PYTHON_CONSTANT[options.dev_appserver_log_level])
 
     configuration = application_configuration.ApplicationConfiguration(
-        options.config_paths)
+        options.config_paths, options.app_id)
 
     if options.enable_cloud_datastore:
       # This requires the oauth server stub to return that the logged in user
       # is in fact an admin.
       os.environ['OAUTH_IS_ADMIN'] = '1'
       gcd_module = application_configuration.ModuleConfiguration(
-          _generate_gcd_app(configuration.app_id.split('~')[1]))
+          gcd_application.generate_gcd_app(configuration.app_id.split('~')[1]))
       configuration.modules.append(gcd_module)
 
     if options.skip_sdk_update_check:
@@ -791,6 +795,8 @@ class DevelopmentServer(object):
         _LOG_LEVEL_TO_RUNTIME_CONSTANT[options.log_level],
         self._create_php_config(options),
         self._create_python_config(options),
+        self._create_java_config(options),
+        self._create_custom_config(options),
         self._create_cloud_sql_config(options),
         self._create_vm_config(options),
         self._create_module_to_setting(options.max_module_instances,
@@ -799,10 +805,16 @@ class DevelopmentServer(object):
         options.automatic_restart,
         options.allow_skipped_files,
         self._create_module_to_setting(options.threadsafe_override,
-                                       configuration, '--threadsafe_override'))
+                                       configuration, '--threadsafe_override'),
+        options.external_port)
 
     request_data = wsgi_request_info.WSGIRequestInfo(self._dispatcher)
     storage_path = _get_storage_path(options.storage_path, configuration.app_id)
+
+    # TODO: Remove after the Files API is really gone.
+    api_server.set_filesapi_enabled(options.blobstore_enable_files_api)
+    if options.blobstore_warn_on_files_api_use:
+      api_server.enable_filesapi_tracking(request_data)
 
     apis = self._create_api_server(
         request_data, storage_path, options, configuration)
@@ -816,6 +828,11 @@ class DevelopmentServer(object):
                                      self._dispatcher, configuration, xsrf_path)
     admin.start()
     self._running_modules.append(admin)
+    try:
+      default = self._dispatcher.get_module_by_name('default')
+      apis.set_balanced_address(default.balanced_address)
+    except request_info.ModuleDoesNotExistError:
+      logging.warning('No default module found. Ignoring.')
 
   def stop(self):
     """Stops all running devappserver2 modules."""
@@ -897,13 +914,15 @@ class DevelopmentServer(object):
         mail_smtp_password=options.smtp_password,
         mail_enable_sendmail=options.enable_sendmail,
         mail_show_mail_body=options.show_mail_body,
+        mail_allow_tls=options.smtp_allow_tls,
         matcher_prospective_search_path=prospective_search_path,
         search_index_path=search_index_path,
         taskqueue_auto_run_tasks=options.enable_task_running,
         taskqueue_default_http_server=application_address,
         user_login_url=user_login_url,
         user_logout_url=user_logout_url,
-        default_gcs_bucket_name=options.default_gcs_bucket_name)
+        default_gcs_bucket_name=options.default_gcs_bucket_name,
+        appidentity_oauth_url=options.appidentity_oauth_url)
 
     return api_server.APIServer(options.api_host, options.api_port,
                                 configuration.app_id)
@@ -915,6 +934,13 @@ class DevelopmentServer(object):
       php_config.php_executable_path = os.path.abspath(
           options.php_executable_path)
     php_config.enable_debugger = options.php_remote_debugging
+    if options.php_gae_extension_path:
+      php_config.gae_extension_path = os.path.abspath(
+          options.php_gae_extension_path)
+    if options.php_xdebug_extension_path:
+      php_config.xdebug_extension_path = os.path.abspath(
+          options.php_xdebug_extension_path)
+
     return php_config
 
   @staticmethod
@@ -926,6 +952,20 @@ class DevelopmentServer(object):
       if options.python_startup_args:
         python_config.startup_args = options.python_startup_args
     return python_config
+
+  @staticmethod
+  def _create_java_config(options):
+    java_config = runtime_config_pb2.JavaConfig()
+    if options.jvm_flag:
+      java_config.jvm_args.extend(options.jvm_flag)
+    return java_config
+
+  @staticmethod
+  def _create_custom_config(options):
+    custom_config = runtime_config_pb2.CustomConfig()
+    custom_config.custom_entrypoint = options.custom_entrypoint
+    custom_config.runtime = options.runtime
+    return custom_config
 
   @staticmethod
   def _create_cloud_sql_config(options):
@@ -941,8 +981,7 @@ class DevelopmentServer(object):
   @staticmethod
   def _create_vm_config(options):
     vm_config = runtime_config_pb2.VMConfig()
-    if options.docker_daemon_url:
-      vm_config.docker_daemon_url = options.docker_daemon_url
+    vm_config.enable_logs = options.enable_mvm_logs
     return vm_config
 
   @staticmethod

@@ -33,6 +33,7 @@ Methods defined in this module:
 
 
 
+
 import httplib
 import os
 import StringIO
@@ -194,7 +195,7 @@ def _is_fetching_self(url, method):
       "PATH_INFO" not in os.environ):
     return False
 
-  scheme, host_port, path, query, fragment = urlparse.urlsplit(url)
+  _, host_port, path, _, _ = urlparse.urlsplit(url)
 
   if host_port == os.environ['HTTP_HOST']:
     current_path = urllib2.unquote(os.environ['PATH_INFO'])
@@ -359,6 +360,8 @@ def _get_fetch_result(rpc):
   Raises:
     InvalidURLError: if the url was invalid.
     DownloadError: if there was a problem fetching the url.
+    PayloadTooLargeError: if the request and its payload was larger than the
+      allowed limit.
     ResponseTooLargeError: if the response was either truncated (and
       allow_truncated=False was passed to make_fetch_call()), or if it
       was too big for us to download.
@@ -374,11 +377,8 @@ def _get_fetch_result(rpc):
   try:
     rpc.check_success()
   except apiproxy_errors.RequestTooLargeError, err:
-    error_detail = ''
-    if err.error_detail:
-      error_detail = ' Error: ' + err.error_detail
     raise InvalidURLError(
-        'Invalid request URL: ' + url + error_detail)
+        'Request body too large fetching URL: ' + url)
   except apiproxy_errors.ApplicationError, err:
     error_detail = ''
     if err.error_detail:
@@ -387,6 +387,11 @@ def _get_fetch_result(rpc):
         urlfetch_service_pb.URLFetchServiceError.INVALID_URL):
       raise InvalidURLError(
           'Invalid request URL: ' + url + error_detail)
+    if (err.application_error ==
+        urlfetch_service_pb.URLFetchServiceError.PAYLOAD_TOO_LARGE):
+
+      raise PayloadTooLargeError(
+          'Request exceeds 10 MiB limit for URL: ' + url)
     if (err.application_error ==
         urlfetch_service_pb.URLFetchServiceError.CLOSED):
       raise ConnectionClosedError(
@@ -402,7 +407,7 @@ def _get_fetch_result(rpc):
           + url + error_detail)
     if (err.application_error ==
         urlfetch_service_pb.URLFetchServiceError.INTERNAL_TRANSIENT_ERROR):
-      raise InteralTransientError(
+      raise InternalTransientError(
           'Temporary error in fetching URL: ' + url + ', please re-try')
     if (err.application_error ==
         urlfetch_service_pb.URLFetchServiceError.DNS_ERROR):
@@ -424,7 +429,11 @@ def _get_fetch_result(rpc):
     if (err.application_error ==
         urlfetch_service_pb.URLFetchServiceError.SSL_CERTIFICATE_ERROR):
       raise SSLCertificateError(
-        'Invalid and/or missing SSL certificate for URL: ' + url)
+          'Invalid and/or missing SSL certificate for URL: ' + url)
+    if (err.application_error ==
+        urlfetch_service_pb.URLFetchServiceError.CONNECTION_ERROR):
+      raise DownloadError('Unable to connect to server at URL: ' + url)
+
     raise err
 
   response = rpc.response
