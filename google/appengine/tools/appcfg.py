@@ -55,7 +55,7 @@ import urllib2
 
 import google
 
-from oauth2client import devshell
+from oauth2client.contrib import devshell
 
 
 import yaml
